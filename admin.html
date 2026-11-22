@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>لوحة الإدارة — درب</title>
+    <meta name="description" content="لوحة تحكم المشرف العام لإدارة المستخدمين وحظر الحسابات وإدارة الرحلات على منصة درب." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body data-page="admin">
+    <a class="skip-link" href="#main-content">انتقل إلى لوحة الإدارة</a>
+
+    <!-- Top Navigation Bar -->
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="header-start">
+          <a href="./index.html" class="brand-logo" aria-label="درب — الصفحة الرئيسية">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9.5 7L14 14.5L17 10.5L21 19H3Z" />
+              </svg>
+            </span>
+            <span class="brand-name">درب</span>
+          </a>
+
+          <nav class="main-nav" aria-label="التنقل الرئيسي">
+            <a href="./index.html" class="nav-link">رحلاتي</a>
+            <a href="./index.html#map" class="nav-link">خريطة الرحلات</a>
+            <a href="./index.html#stats" class="nav-link">إحصائياتي</a>
+            <a href="./admin.html" class="nav-link is-active nav-link-admin" id="navAdminLink" aria-current="page" hidden>لوحة الإدارة</a>
+          </nav>
+        </div>
+
+        <div class="header-actions">
+          <div class="user-menu-inline" id="navUserGroup" hidden>
+            <span class="user-greeting" id="navUserName"></span>
+            <button type="button" class="btn btn-ghost" id="navLogoutBtn">خروج</button>
+          </div>
+          <a href="./index.html" class="btn btn-outline">العودة للرئيسية</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="main-content container">
+      <!-- Guard State for Unauthorized Visitors -->
+      <section id="adminGuardBox" class="empty-state">
+        <h1 class="empty-title" id="adminGuardTitle">جاري التحقق من صلاحيات المشرف العام...</h1>
+        <p class="empty-desc" id="adminGuardDesc">هذه الصفحة مخصّصة حصرياً للمشرف العام لمنصة درب.</p>
+        <a href="./index.html" class="btn btn-outline" id="adminGuardHomeBtn" hidden>العودة إلى الصفحة الرئيسية</a>
+      </section>
+
+      <!-- Admin Dashboard Content -->
+      <div id="adminWorkspace" hidden>
+        <section class="page-intro">
+          <div class="intro-copy">
+            <h1 class="page-title">لوحة تحكم المشرف العام</h1>
+            <p class="page-subtitle">إدارة الحسابات المسجّلة، حظر أو تفعيل المستخدمين، والإشراف على جميع الرحلات المنشورة.</p>
+          </div>
+          <span class="season-label">صلاحية Super Admin</span>
+        </section>
+
+        <!-- Admin KPI Cards -->
+        <section class="stats-grid" aria-label="إحصائيات المنصة">
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="adminUsersCount">0</p>
+              <p class="stat-label">مستخدم مسجّل</p>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M5.6 5.6l12.8 12.8" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="adminBannedCount">0</p>
+              <p class="stat-label">حساب محظور</p>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9 8l4.5 7L17 11l4 8H3Z" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="adminTripsCount">0</p>
+              <p class="stat-label">إجمالي الرحلات</p>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="6" cy="19" r="2.5" />
+                <circle cx="18" cy="5" r="2.5" />
+                <path d="M8.5 19H14a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h5.5" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="adminTotalKm">0.0</p>
+              <p class="stat-label">كم مسجّلة</p>
+            </div>
+          </article>
+        </section>
+
+        <!-- Users Management Table -->
+        <section class="surface-card admin-section" aria-labelledby="usersTableHeading">
+          <div class="card-header-row">
+            <div>
+              <h2 id="usersTableHeading" class="card-section-title">المستخدمون المسجّلون</h2>
+              <p class="card-section-subtitle">يمكنك حظر أو فك الحظر عن أي حساب (لا يمكن حظر حسابك الشخصي)</p>
+            </div>
+          </div>
+
+          <div class="table-scroll">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>الاسم</th>
+                  <th>البريد الإلكتروني</th>
+                  <th>الدور</th>
+                  <th>الحالة</th>
+                  <th>الإجراء</th>
+                </tr>
+              </thead>
+              <tbody id="adminUsersTableBody" data-testid="admin-users-body"></tbody>
+            </table>
+          </div>
+          <p id="adminUsersEmpty" class="comments-empty" hidden>لا يوجد مستخدمون مسجّلون بعد.</p>
+        </section>
+
+        <!-- Trips Moderation Table -->
+        <section class="surface-card admin-section" aria-labelledby="tripsTableHeading">
+          <div class="card-header-row">
+            <div>
+              <h2 id="tripsTableHeading" class="card-section-title">إدارة جميع الرحلات</h2>
+              <p class="card-section-subtitle">استعرض أي رحلة أو احذفها نهائياً من المنصة</p>
+            </div>
+          </div>
+
+          <div class="table-scroll">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>اسم الرحلة</th>
+                  <th>الكاتب</th>
+                  <th>الموقع</th>
+                  <th>التاريخ</th>
+                  <th>المسافة</th>
+                  <th>الإجراء</th>
+                </tr>
+              </thead>
+              <tbody id="adminTripsTableBody" data-testid="admin-trips-body"></tbody>
+            </table>
+          </div>
+          <p id="adminTripsEmpty" class="comments-empty" hidden>لا توجد رحلات منشورة حالياً.</p>
+        </section>
+      </div>
+    </main>
+
+    <!-- Confirmation Dialog -->
+    <dialog id="confirmDialog" class="confirm-modal" aria-labelledby="confirmTitle">
+      <div class="confirm-shell">
+        <h2 id="confirmTitle" class="confirm-title">تأكيد الإجراء</h2>
+        <p id="confirmMessage" class="confirm-message">هل أنت متأكد من المتابعة؟</p>
+        <div class="confirm-actions">
+          <button type="button" id="confirmAcceptBtn" class="btn btn-danger">تأكيد</button>
+          <button type="button" id="confirmCancelBtn" class="btn btn-outline">إلغاء</button>
+        </div>
+      </div>
+    </dialog>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p class="footer-brand">درب — لوحة الإدارة</p>
+        <div class="footer-links">
+          <a href="./index.html" class="footer-link">الصفحة الرئيسية</a>
+        </div>
+      </div>
+    </footer>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

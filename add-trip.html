@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>توثيق رحلة جديدة — درب</title>
+    <meta name="description" content="أضف رحلتك الجبلية الجديدة مع صورة الغلاف وملف GPX إلى منصة درب." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body data-page="add-trip">
+    <a class="skip-link" href="#main-content">انتقل إلى نموذج إضافة الرحلة</a>
+
+    <!-- Top Navigation Bar -->
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="header-start">
+          <a href="./index.html" class="brand-logo" aria-label="درب — الصفحة الرئيسية">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9.5 7L14 14.5L17 10.5L21 19H3Z" />
+              </svg>
+            </span>
+            <span class="brand-name">درب</span>
+          </a>
+
+          <nav class="main-nav" aria-label="التنقل الرئيسي">
+            <a href="./index.html" class="nav-link">رحلاتي</a>
+            <a href="./index.html#map" class="nav-link">خريطة الرحلات</a>
+            <a href="./index.html#stats" class="nav-link">إحصائياتي</a>
+            <a href="./admin.html" class="nav-link nav-link-admin" id="navAdminLink" hidden>لوحة الإدارة</a>
+          </nav>
+        </div>
+
+        <div class="header-actions">
+          <div class="user-menu-inline" id="navUserGroup" hidden>
+            <span class="user-greeting" id="navUserName"></span>
+            <button type="button" class="btn btn-ghost" id="navLogoutBtn">خروج</button>
+          </div>
+          <a href="./index.html" class="btn btn-outline">العودة لرحلاتي</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="main-content container">
+      <!-- Auth Guard Loading / Banned Notice -->
+      <section id="addTripGuardBox" class="empty-state">
+        <h1 class="empty-title" id="addTripGuardTitle">جاري التحقق من الجلسة...</h1>
+        <p class="empty-desc" id="addTripGuardDesc">يُشترط تسجيل الدخول بحساب نشط لتوثيق رحلة جديدة.</p>
+        <a href="./auth.html" class="btn btn-primary" id="addTripGuardLoginLink" hidden>الانتقال لتسجيل الدخول</a>
+      </section>
+
+      <!-- Protected Add Trip Workspace (Matching attached Figma layout) -->
+      <div id="addTripWorkspace" hidden>
+        <section class="page-intro">
+          <div class="intro-copy">
+            <h1 class="page-title">كل مغامرة تستحق أن تُحفظ.</h1>
+            <p class="page-subtitle">أضف تفاصيل رحلتك ودع الذكريات تجد طريقها إلى درب.</p>
+          </div>
+          <span class="season-label">موسم 2026</span>
+        </section>
+
+        <div class="add-trip-grid">
+          <form id="addTripForm" class="new-trip-form" novalidate>
+            <div id="formErrorBanner" class="form-error-banner" role="alert" hidden></div>
+
+            <fieldset class="form-section-card">
+              <legend class="form-section-legend">
+                <span class="step-num">1</span>
+                <span>تفاصيل الرحلة</span>
+              </legend>
+
+              <div class="form-group">
+                <label for="tripTitleInput" class="form-label">اسم الرحلة <span class="required-mark">*</span></label>
+                <input
+                  type="text"
+                  id="tripTitleInput"
+                  name="title"
+                  class="form-input"
+                  placeholder="مثال: مسار قمة الجبل الأخضر"
+                  required
+                />
+              </div>
+
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="tripLocationInput" class="form-label">الموقع <span class="required-mark">*</span></label>
+                  <input
+                    type="text"
+                    id="tripLocationInput"
+                    name="location"
+                    class="form-input"
+                    placeholder="مثال: أبها، عسير"
+                    required
+                  />
+                </div>
+                <div class="form-group">
+                  <label for="tripDateInput" class="form-label">تاريخ الرحلة <span class="required-mark">*</span></label>
+                  <input type="date" id="tripDateInput" name="date" class="form-input" required />
+                </div>
+              </div>
+
+              <div class="form-row-3">
+                <div class="form-group">
+                  <label for="tripDistanceInput" class="form-label">المسافة (km) <span class="required-mark">*</span></label>
+                  <input
+                    type="number"
+                    id="tripDistanceInput"
+                    name="distanceKm"
+                    class="form-input"
+                    step="0.1"
+                    min="0.1"
+                    placeholder="10.5"
+                    required
+                  />
+                </div>
+                <div class="form-group">
+                  <label for="tripDurationInput" class="form-label">المدة (ساعات) <span class="required-mark">*</span></label>
+                  <input
+                    type="number"
+                    id="tripDurationInput"
+                    name="durationHours"
+                    class="form-input"
+                    step="0.5"
+                    min="0.5"
+                    placeholder="4"
+                    required
+                  />
+                </div>
+                <div class="form-group">
+                  <label for="tripElevationInput" class="form-label">الارتفاع المكتسب (m)</label>
+                  <input
+                    type="number"
+                    id="tripElevationInput"
+                    name="elevationGainM"
+                    class="form-input"
+                    step="10"
+                    min="0"
+                    placeholder="520"
+                  />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <span class="form-label">مستوى الصعوبة</span>
+                <div class="difficulty-segmented" role="radiogroup" aria-label="مستوى الصعوبة">
+                  <label class="diff-option">
+                    <input type="radio" name="difficulty" value="سهل" />
+                    <span>سهل</span>
+                  </label>
+                  <label class="diff-option">
+                    <input type="radio" name="difficulty" value="متوسط" checked />
+                    <span>متوسط</span>
+                  </label>
+                  <label class="diff-option">
+                    <input type="radio" name="difficulty" value="صعب" />
+                    <span>صعب</span>
+                  </label>
+                </div>
+              </div>
+            </fieldset>
+
+            <fieldset class="form-section-card">
+              <legend class="form-section-legend">
+                <span class="step-num">2</span>
+                <span>لحظات تستحق التوثيق</span>
+              </legend>
+
+              <div class="form-group">
+                <label for="tripNotesInput" class="form-label">مذكرات الرحلة</label>
+                <textarea
+                  id="tripNotesInput"
+                  name="notes"
+                  class="form-textarea"
+                  rows="4"
+                  placeholder="اكتب عن الطريق، الرفقة، حالة الطقس، وأجمل لحظة عشتها..."
+                ></textarea>
+              </div>
+
+              <div class="form-group">
+                <label for="tripCoverInput" class="form-label">صورة غلاف الرحلة</label>
+                <div id="coverDropzone" class="upload-dropzone">
+                  <input
+                    type="file"
+                    id="tripCoverInput"
+                    name="coverImageFile"
+                    class="upload-file-input"
+                    accept="image/png,image/jpeg,image/webp"
+                  />
+                  <div id="coverUploadPlaceholder" class="upload-placeholder">
+                    <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="3" y="3" width="18" height="18" rx="3" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <path d="M21 15l-5-5L5 21" />
+                    </svg>
+                    <p class="upload-title">اسحب صورة الغلاف هنا أو اختر من جهازك</p>
+                    <p class="upload-hint">حتى 5 MB للصورة · PNG, JPG, WEBP · تُرفع عبر Firebase Storage</p>
+                  </div>
+                  <div id="coverPreviewBox" class="upload-preview" hidden>
+                    <img id="coverPreviewImg" class="upload-preview-img" src="" alt="معاينة صورة الغلاف" />
+                    <div class="upload-preview-meta">
+                      <span id="coverFileName" class="upload-file-name"></span>
+                      <button type="button" id="removeCoverBtn" class="btn btn-subtle">إزالة الصورة</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <div class="gpx-upload-bar" id="gpxUploadBar">
+                  <div class="gpx-upload-info">
+                    <span class="gpx-upload-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 16V4m0 0l-4 4m4-4l4 4" />
+                        <path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" />
+                      </svg>
+                    </span>
+                    <div class="gpx-upload-copy">
+                      <p class="gpx-upload-title" id="gpxUploadTitle">أضف مسار الرحلة GPX</p>
+                      <p class="gpx-upload-hint" id="gpxUploadHint">اختياري · ارفع ملف .gpx لعرض المسار وملف الارتفاعات تلقائياً</p>
+                    </div>
+                  </div>
+                  <div class="gpx-upload-actions">
+                    <input
+                      type="file"
+                      id="tripGpxInput"
+                      name="gpxFile"
+                      class="sr-only"
+                      accept=".gpx,application/gpx+xml,application/xml,text/xml"
+                    />
+                    <label for="tripGpxInput" class="btn btn-outline gpx-pick-btn">اختيار ملف</label>
+                    <button type="button" id="removeGpxBtn" class="btn btn-subtle" hidden>إزالة</button>
+                  </div>
+                </div>
+              </div>
+            </fieldset>
+
+            <div class="modal-form-footer">
+              <button type="submit" class="btn btn-primary" id="submitTripBtn">حفظ الرحلة ونشرها</button>
+              <a href="./index.html" class="btn btn-outline">إلغاء</a>
+            </div>
+          </form>
+
+          <aside class="modal-aside" aria-label="نصائح توثيق الرحلة">
+            <div class="aside-quote-card">
+              <img
+                src="/src/assets/images/gallery_trail_ridge_1795369263717.jpg"
+                alt="مسار جبلي بين الأشجار فوق السحاب"
+                class="aside-quote-img"
+                referrerpolicy="no-referrer"
+              />
+              <div class="aside-quote-body">
+                <p class="aside-quote-title">الطريق ينتهي، والحكاية تبقى.</p>
+                <p class="aside-quote-text">دوّن التفاصيل الصغيرة الآن؛ رائحة الأرض، لحظة الوصول، والرفقة التي جعلت الطريق أخف.</p>
+              </div>
+            </div>
+            <div class="aside-tips-card">
+              <h2 class="aside-tips-title">قبل أن تحفظ حكايتك</h2>
+              <ul class="aside-tips-list">
+                <li>اختر اسماً واضحاً يعكس المسار والمنطقة</li>
+                <li>ارفع ملف GPX ليتم حساب المسافة والارتفاعات تلقائياً</li>
+                <li>أضف صورة غلاف عالية الجودة تبرز جمال الطريق</li>
+              </ul>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p class="footer-brand">درب — لكل رحلة حكاية تستحق أن تُروى</p>
+        <div class="footer-links">
+          <a href="./index.html" class="footer-link">رحلاتي</a>
+        </div>
+      </div>
+    </footer>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

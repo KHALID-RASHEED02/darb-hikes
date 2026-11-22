@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>درب — سجل رحلات المشي الجبلي</title>
+    <meta
+      name="description"
+      content="مساحتك لحفظ المسارات الجبلية، وتوثيق رحلات المشي في الطبيعة، واستعراض الإحصائيات والخرائط التفاعلية."
+    />
+    <meta property="og:title" content="درب — سجل رحلات المشي الجبلي" />
+    <meta
+      property="og:description"
+      content="مساحتك لحفظ المسارات الجبلية، وتوثيق رحلات المشي في الطبيعة، واستعراض الإحصائيات والخرائط التفاعلية."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body data-page="dashboard">
+    <a class="skip-link" href="#main-content">انتقل إلى المحتوى الرئيسي</a>
+
+    <!-- Top Navigation Bar -->
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="header-start">
+          <a href="./index.html" class="brand-logo" aria-label="درب — الصفحة الرئيسية">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9.5 7L14 14.5L17 10.5L21 19H3Z" />
+              </svg>
+            </span>
+            <span class="brand-name">درب</span>
+          </a>
+
+          <nav class="main-nav" aria-label="التنقل الرئيسي">
+            <button type="button" class="nav-link is-active" data-nav-view="trips" aria-current="page">
+              رحلاتي
+            </button>
+            <button type="button" class="nav-link" data-nav-view="map">
+              خريطة الرحلات
+            </button>
+            <button type="button" class="nav-link" data-nav-view="stats">
+              إحصائياتي
+            </button>
+            <a href="./admin.html" class="nav-link nav-link-admin" id="navAdminLink" hidden>
+              لوحة الإدارة
+            </a>
+          </nav>
+        </div>
+
+        <div class="header-actions">
+          <a href="./auth.html" class="btn btn-outline" id="navLoginBtn">تسجيل الدخول</a>
+
+          <div class="user-menu-inline" id="navUserGroup" hidden>
+            <span class="user-greeting" id="navUserName"></span>
+            <button type="button" class="btn btn-ghost" id="navLogoutBtn">خروج</button>
+          </div>
+
+          <a href="./add-trip.html" class="btn btn-primary" id="navAddTripBtn">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span>رحلة جديدة</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="main-content container">
+      <!-- Banned Account Notice -->
+      <div id="globalBannedBanner" class="alert-banner alert-danger" role="alert" hidden>
+        تم تعليق هذا الحساب من قِبل الإدارة ولا يمكنك نشر رحلات أو تعليقات جديدة.
+      </div>
+
+      <!-- Primary View: Trips Feed & Dashboard -->
+      <div id="view-trips" class="dashboard-view">
+        <section class="page-intro" aria-labelledby="page-heading">
+          <div class="intro-copy">
+            <h1 id="page-heading" class="page-title">خطوة أبعد، حكاية أجمل.</h1>
+            <p class="page-subtitle">مساحتك لحفظ المسارات، وتوثيق اللحظات، والعودة إلى الطبيعة.</p>
+          </div>
+          <span class="season-label" id="seasonLabel">موسم 2026</span>
+        </section>
+
+        <!-- Dynamic Hero Banner -->
+        <section class="hero-banner" aria-labelledby="hero-title">
+          <img
+            id="heroImage"
+            class="hero-bg-img"
+            src="/src/assets/images/hero_alsoudah_mountains_1795369263890.jpg"
+            alt="سلسلة جبال خضراء محاطة بالضباب الصباحي"
+            referrerpolicy="no-referrer"
+          />
+          <div class="hero-scrim" aria-hidden="true"></div>
+          <div class="hero-content">
+            <p class="hero-kicker" id="heroKicker">منصة درب لتوثيق المسارات الجبلية</p>
+            <h2 id="hero-title" class="hero-title">ابدأ بتوثيق أول مسار لك في الطبيعة</h2>
+            <p class="hero-meta" id="heroMeta">ارفع ملف GPX وصور رحلتك لتبني سجل مغامراتك الحي</p>
+            <a id="heroCta" href="./add-trip.html" class="btn btn-hero">
+              <span id="heroCtaText">وثّق أول رحلة</span>
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M19 12H5M11 18l-6-6 6-6" />
+              </svg>
+            </a>
+          </div>
+        </section>
+
+        <!-- 4 Live Summary Stat Cards (Western Numerals 0-9, 0 when DB is empty) -->
+        <section class="stats-grid" aria-label="ملخص إحصائيات الرحلات">
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9 8l4.5 7L17 11l4 8H3Z" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="statTotalTrips" data-testid="stat-total-trips">0</p>
+              <p class="stat-label">رحلة موثّقة</p>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="6" cy="19" r="2.5" />
+                <circle cx="18" cy="5" r="2.5" />
+                <path d="M8.5 19H14a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h5.5" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="statTotalKm" data-testid="stat-total-km">0.0</p>
+              <p class="stat-label">كم مقطوعة</p>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v5l3 2" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="statTotalHours" data-testid="stat-total-hours">0</p>
+              <p class="stat-label">ساعة في الطبيعة</p>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 17l6-6 4 4 8-8" />
+                <path d="M15 7h6v6" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="statTotalElevation" data-testid="stat-total-elevation">0</p>
+              <p class="stat-label">متر ارتفاع مكتسب</p>
+            </div>
+          </article>
+        </section>
+
+        <!-- Filter & Real-Time Search Bar -->
+        <section class="trips-section" aria-labelledby="trips-section-title">
+          <div class="section-toolbar">
+            <div class="toolbar-start">
+              <h2 id="trips-section-title" class="section-heading">سجلّ الرحلات</h2>
+              <div class="filter-tabs" role="tablist" aria-label="تصفية الرحلات">
+                <button
+                  type="button"
+                  role="tab"
+                  class="filter-tab is-active"
+                  data-filter="all"
+                  aria-selected="true"
+                >
+                  <span>كل الرحلات</span>
+                  <span class="tab-count" id="countAll">0</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  class="filter-tab"
+                  data-filter="this-year"
+                  aria-selected="false"
+                >
+                  <span>هذا العام</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  class="filter-tab"
+                  data-filter="mine"
+                  aria-selected="false"
+                >
+                  <span>رحلاتي الخاصة</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="toolbar-end">
+              <div class="search-field">
+                <label for="tripSearchInput" class="sr-only">ابحث عن رحلة أو مكان</label>
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M20 20l-3.5-3.5" />
+                </svg>
+                <input
+                  type="search"
+                  id="tripSearchInput"
+                  class="search-input"
+                  placeholder="ابحث عن رحلة أو مكان..."
+                  autocomplete="off"
+                />
+              </div>
+
+              <div class="view-switcher" role="group" aria-label="طريقة العرض">
+                <button
+                  type="button"
+                  class="icon-toggle is-active"
+                  id="gridViewToggle"
+                  aria-label="عرض الشبكة"
+                  aria-pressed="true"
+                  title="عرض الشبكة"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                    <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                    <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                    <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="icon-toggle"
+                  id="mapViewToggle"
+                  aria-label="عرض الخريطة"
+                  aria-pressed="false"
+                  title="عرض الخريطة"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 21s-6-5.6-6-10a6 6 0 1 1 12 0c0 4.4-6 10-6 10z" />
+                    <circle cx="12" cy="11" r="2.2" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Loading Skeleton -->
+          <div id="tripsLoadingState" class="loading-grid" aria-label="جاري تحميل الرحلات">
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+          </div>
+
+          <!-- Inline Map Preview -->
+          <div id="inlineMapPanel" class="inline-map-panel" hidden>
+            <div id="inlineTripsMap" class="leaflet-map-frame" data-testid="inline-trips-map" aria-label="خريطة مسارات الرحلات"></div>
+          </div>
+
+          <!-- Live Firestore Trips Grid -->
+          <div id="tripsGrid" class="trips-grid" data-testid="trips-grid" aria-live="polite"></div>
+
+          <!-- Empty State (Shown when DB is empty or no search matches) -->
+          <div id="emptyState" class="empty-state" data-testid="empty-state" hidden>
+            <div class="empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9 8l4.5 7L17 11l4 8H3Z" />
+              </svg>
+            </div>
+            <h3 class="empty-title" id="emptyStateTitle">لا توجد رحلات مضافة بعد، كن أول من يوثق مساره!</h3>
+            <p class="empty-desc" id="emptyStateDesc">
+              سجّل دخولك وأضف أول رحلة جبلية مع صورة الغلاف وملف GPX لتظهر هنا مباشرة.
+            </p>
+            <div class="empty-actions">
+              <a href="./add-trip.html" class="btn btn-primary" id="emptyAddTripBtn">إضافة أول رحلة</a>
+              <button type="button" class="btn btn-outline" id="resetFiltersBtn" hidden>عرض جميع الرحلات</button>
+            </div>
+          </div>
+
+          <!-- Grid Footer -->
+          <div id="tripsFooterRow" class="trips-footer-row" hidden>
+            <p class="trips-counter-note" id="tripsCounterNote"></p>
+          </div>
+        </section>
+      </div>
+
+      <!-- Secondary View: Full Trips Map (خريطة الرحلات) -->
+      <section id="view-map" class="secondary-view" hidden aria-labelledby="map-view-heading">
+        <div class="page-intro">
+          <div class="intro-copy">
+            <h1 id="map-view-heading" class="page-title">خريطة الرحلات</h1>
+            <p class="page-subtitle">استعرض جميع المسارات الجبلية الموثّقة في قاعدة البيانات وانقر على أي نقطة لفتح التفاصيل.</p>
+          </div>
+          <button type="button" class="btn btn-outline" data-nav-view="trips">العودة إلى سجلّ الرحلات</button>
+        </div>
+
+        <div class="map-overview-layout">
+          <div class="surface-card map-canvas-card">
+            <div id="fullTripsMap" class="leaflet-map-frame leaflet-map-lg" data-testid="full-trips-map" aria-label="خريطة تفاعلية لجميع الرحلات"></div>
+          </div>
+          <aside class="surface-card map-sidebar-card" aria-label="قائمة المسارات على الخريطة">
+            <h2 class="card-section-title">المسارات المسجّلة</h2>
+            <ul id="mapTripsList" class="map-trips-list"></ul>
+          </aside>
+        </div>
+      </section>
+
+      <!-- Secondary View: Statistics (إحصائياتي) -->
+      <section id="view-stats" class="secondary-view" hidden aria-labelledby="stats-view-heading">
+        <div class="page-intro">
+          <div class="intro-copy">
+            <h1 id="stats-view-heading" class="page-title">إحصائياتي</h1>
+            <p class="page-subtitle">تحليل مباشر للرحلات الموثّقة حسب المنطقة ومستوى الصعوبة.</p>
+          </div>
+          <button type="button" class="btn btn-outline" data-nav-view="trips">العودة إلى سجلّ الرحلات</button>
+        </div>
+
+        <div id="analyticsGrid" class="analytics-grid"></div>
+      </section>
+    </main>
+
+    <!-- Delete Confirmation Dialog -->
+    <dialog id="confirmDialog" class="confirm-modal" aria-labelledby="confirmTitle">
+      <div class="confirm-shell">
+        <h2 id="confirmTitle" class="confirm-title">تأكيد الحذف</h2>
+        <p id="confirmMessage" class="confirm-message">هل أنت متأكد من تنفيذ هذا الإجراء؟ لا يمكن التراجع عنه.</p>
+        <div class="confirm-actions">
+          <button type="button" id="confirmAcceptBtn" class="btn btn-danger">تأكيد الحذف</button>
+          <button type="button" id="confirmCancelBtn" class="btn btn-outline">إلغاء</button>
+        </div>
+      </div>
+    </dialog>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p class="footer-brand">درب — لكل رحلة حكاية تستحق أن تُروى</p>
+        <div class="footer-links">
+          <a href="./add-trip.html" class="footer-link">توثيق رحلة</a>
+          <span aria-hidden="true">·</span>
+          <a href="./auth.html" class="footer-link">الحساب</a>
+        </div>
+      </div>
+    </footer>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

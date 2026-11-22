@@ -1,0 +1,8 @@
+{
+  "name": "درب — سجل رحلات المشي الجبلي",
+  "description": "موقع شخصي لتوثيق رحلات المشي الجبلي والمسارات في الطبيعة مع خرائط تفاعلية وملفات الارتفاعات وتصدير GPX.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

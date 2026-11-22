@@ -1,0 +1,234 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Global Hardened Primitives
+    // -----------------------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isBootstrappedAdminEmail() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && (
+           request.auth.token.email == 'az208345@gmail.com'
+        );
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        isBootstrappedAdminEmail()
+        || (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin'
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned == false
+        )
+      );
+    }
+
+    function isActiveUser() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned == false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Entity Validation Blueprints (Anti-Update-Gap)
+    // -----------------------------------------------------------------------
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'role', 'isBanned', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'isBanned', 'createdAt'])
+        && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 160
+        && data.role is string && data.role in ['user', 'superadmin']
+        && data.isBanned is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTrip(data) {
+      return data.keys().hasAll([
+          'title', 'location', 'region', 'dateIso', 'year', 'difficulty',
+          'distanceKm', 'durationHours', 'elevationGainM', 'maxElevationM', 'minElevationM',
+          'notes', 'coverImageUrl', 'startLat', 'startLng', 'routePoints', 'elevationProfile',
+          'authorUid', 'authorName', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'title', 'location', 'region', 'dateIso', 'year', 'difficulty',
+          'distanceKm', 'durationHours', 'elevationGainM', 'maxElevationM', 'minElevationM',
+          'notes', 'coverImageUrl', 'gpxUrl', 'gpxFileName', 'startLat', 'startLng',
+          'routePoints', 'elevationProfile', 'authorUid', 'authorName', 'createdAt'
+        ])
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 120
+        && data.location is string && data.location.size() >= 2 && data.location.size() <= 120
+        && data.region is string && data.region.size() >= 1 && data.region.size() <= 60
+        && data.dateIso is string && data.dateIso.size() == 10 && data.dateIso.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.year is number && data.year >= 2000 && data.year <= 2100
+        && data.difficulty is string && data.difficulty in ['سهل', 'متوسط', 'صعب']
+        && data.distanceKm is number && data.distanceKm > 0 && data.distanceKm <= 500
+        && data.durationHours is number && data.durationHours > 0 && data.durationHours <= 240
+        && data.elevationGainM is number && data.elevationGainM >= 0 && data.elevationGainM <= 20000
+        && data.maxElevationM is number && data.maxElevationM >= -500 && data.maxElevationM <= 9000
+        && data.minElevationM is number && data.minElevationM >= -500 && data.minElevationM <= 9000
+        && data.notes is string && data.notes.size() <= 4000
+        && data.coverImageUrl is string && data.coverImageUrl.size() <= 350000
+        && (!('gpxUrl' in data) || (data.gpxUrl is string && data.gpxUrl.size() <= 2000))
+        && (!('gpxFileName' in data) || (data.gpxFileName is string && data.gpxFileName.size() <= 160))
+        && data.startLat is number && data.startLat >= -90 && data.startLat <= 90
+        && data.startLng is number && data.startLng >= -180 && data.startLng <= 180
+        && data.routePoints is list && data.routePoints.size() >= 2 && data.routePoints.size() <= 150
+        && data.routePoints[0] is map && data.routePoints[0].lat is number && data.routePoints[0].lng is number
+        && data.elevationProfile is list && data.elevationProfile.size() >= 2 && data.elevationProfile.size() <= 30
+        && data.elevationProfile[0] is map && data.elevationProfile[0].km is number && data.elevationProfile[0].m is number
+        && data.authorUid is string && isValidId(data.authorUid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80
+        && data.createdAt is timestamp;
+    }
+
+    function isValidComment(data, tripId) {
+      return data.keys().hasAll(['tripId', 'authorUid', 'authorName', 'text', 'createdAt'])
+        && data.keys().hasOnly(['tripId', 'authorUid', 'authorName', 'text', 'createdAt'])
+        && data.tripId is string && data.tripId == tripId && isValidId(data.tripId)
+        && data.authorUid is string && isValidId(data.authorUid)
+        && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 80
+        && data.text is string && data.text.size() >= 2 && data.text.size() <= 1000
+        && data.createdAt is timestamp;
+    }
+
+    // -----------------------------------------------------------------------
+    // Collection: /users/{userId} (PII Isolated to Owner & SuperAdmin)
+    // -----------------------------------------------------------------------
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isSuperAdmin());
+      allow list: if isSuperAdmin();
+
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().isBanned == false
+        && (
+          incoming().role == 'user'
+          || (incoming().role == 'superadmin' && isBootstrappedAdminEmail())
+        );
+
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && (
+          // Action 1: Owner updates display name only (cannot touch role or isBanned)
+          (
+            isOwner(userId)
+            && existing().isBanned == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name'])
+          )
+          ||
+          // Action 2: Super Admin moderates account (ban/unban or role change, never banning self)
+          (
+            isSuperAdmin()
+            && request.auth.uid != userId
+            && incoming().diff(existing()).affectedKeys().hasOnly(['isBanned', 'role'])
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Collection: /trips/{tripId}
+    // -----------------------------------------------------------------------
+    match /trips/{tripId} {
+      allow get: if isValidId(tripId);
+      allow list: if true;
+
+      allow create: if isSignedIn()
+        && isValidId(tripId)
+        && isValidTrip(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && (isActiveUser() || isSuperAdmin());
+
+      allow update: if isSignedIn()
+        && isValidId(tripId)
+        && isValidTrip(incoming())
+        && incoming().authorUid == existing().authorUid
+        && incoming().createdAt == existing().createdAt
+        && (
+          // Action 1: Owner edits field notes
+          (
+            existing().authorUid == request.auth.uid
+            && isActiveUser()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['notes'])
+          )
+          ||
+          // Action 2: Super Admin updates notes
+          (
+            isSuperAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['notes'])
+          )
+        );
+
+      allow delete: if isSignedIn()
+        && isValidId(tripId)
+        && (existing().authorUid == request.auth.uid || isSuperAdmin());
+
+      // ---------------------------------------------------------------------
+      // Subcollection: /trips/{tripId}/comments/{commentId} (Master Gate)
+      // ---------------------------------------------------------------------
+      match /comments/{commentId} {
+        allow get: if isValidId(tripId) && isValidId(commentId);
+        allow list: if isValidId(tripId);
+
+        allow create: if isSignedIn()
+          && isValidId(tripId)
+          && isValidId(commentId)
+          && isValidComment(incoming(), tripId)
+          && incoming().authorUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/trips/$(tripId))
+          && (isActiveUser() || isSuperAdmin());
+
+        allow update: if false;
+
+        allow delete: if isSignedIn()
+          && isValidId(tripId)
+          && isValidId(commentId)
+          && (
+            existing().authorUid == request.auth.uid
+            || isSuperAdmin()
+            || (
+              exists(/databases/$(database)/documents/trips/$(tripId))
+              && get(/databases/$(database)/documents/trips/$(tripId)).data.authorUid == request.auth.uid
+            )
+          );
+      }
+    }
+  }
+}

@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>تفاصيل الرحلة — درب</title>
+    <meta
+      name="description"
+      content="استعرض تفاصيل المسار الجبلي، الخريطة التفاعلية، ملف الارتفاعات، وتنزيل ملف GPX في درب."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body data-page="details">
+    <a class="skip-link" href="#main-content">انتقل إلى تفاصيل الرحلة</a>
+
+    <!-- Top Navigation Bar -->
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="header-start">
+          <a href="./index.html" class="brand-logo" aria-label="درب — الصفحة الرئيسية">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9.5 7L14 14.5L17 10.5L21 19H3Z" />
+              </svg>
+            </span>
+            <span class="brand-name">درب</span>
+          </a>
+
+          <nav class="main-nav" aria-label="التنقل الرئيسي">
+            <a href="./index.html" class="nav-link is-active">رحلاتي</a>
+            <a href="./index.html#map" class="nav-link">خريطة الرحلات</a>
+            <a href="./index.html#stats" class="nav-link">إحصائياتي</a>
+            <a href="./admin.html" class="nav-link nav-link-admin" id="navAdminLink" hidden>لوحة الإدارة</a>
+          </nav>
+        </div>
+
+        <div class="header-actions">
+          <a href="./auth.html" class="btn btn-outline" id="navLoginBtn">تسجيل الدخول</a>
+          <div class="user-menu-inline" id="navUserGroup" hidden>
+            <span class="user-greeting" id="navUserName"></span>
+            <button type="button" class="btn btn-ghost" id="navLogoutBtn">خروج</button>
+          </div>
+          <a href="./index.html" class="btn btn-outline">العودة للرحلات</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="main-content container">
+      <!-- Loading / Not Found State -->
+      <section id="detailStatusBox" class="empty-state">
+        <h1 class="empty-title" id="detailStatusTitle">جاري تحميل بيانات الرحلة...</h1>
+        <p class="empty-desc" id="detailStatusDesc">يرجى الانتظار لحظة أثناء جلب تفاصيل المسار من قاعدة البيانات.</p>
+        <a href="./index.html" class="btn btn-outline" id="detailBackHomeBtn" hidden>العودة إلى الصفحة الرئيسية</a>
+      </section>
+
+      <!-- Loaded Trip Content -->
+      <div id="detailContentWrap" hidden>
+        <nav class="breadcrumb" aria-label="مسار التنقل">
+          <a href="./index.html" class="breadcrumb-link">رحلاتي</a>
+          <span class="breadcrumb-sep" aria-hidden="true">/</span>
+          <span id="breadcrumbRegion" class="breadcrumb-region"></span>
+          <span class="breadcrumb-sep" aria-hidden="true">/</span>
+          <span id="breadcrumbTitle" class="breadcrumb-current" aria-current="page"></span>
+        </nav>
+
+        <!-- Hero Cover Header -->
+        <section class="detail-hero" aria-labelledby="detailTitle">
+          <img
+            id="detailHeroImage"
+            class="detail-hero-img"
+            src="/src/assets/images/hero_alsoudah_mountains_1795369263890.jpg"
+            alt="صورة غلاف الرحلة"
+            referrerpolicy="no-referrer"
+          />
+          <div class="detail-hero-scrim" aria-hidden="true"></div>
+          <div class="detail-hero-inner">
+            <div class="detail-hero-top">
+              <span id="detailDifficultyBadge" class="detail-difficulty-badge">متوسط</span>
+              <button
+                type="button"
+                id="detailDeleteBtn"
+                class="btn btn-danger-soft"
+                hidden
+              >
+                حذف الرحلة
+              </button>
+            </div>
+
+            <div class="detail-hero-bottom">
+              <p id="detailAuthorLine" class="detail-hero-kicker"></p>
+              <h1 id="detailTitle" class="detail-hero-title"></h1>
+              <div class="detail-hero-meta">
+                <span class="meta-inline">
+                  <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 21s-6-5.6-6-10a6 6 0 1 1 12 0c0 4.4-6 10-6 10z" />
+                    <circle cx="12" cy="11" r="2.2" />
+                  </svg>
+                  <span id="detailLocation"></span>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span id="detailDate"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4 Detailed Route Stat Cards -->
+        <section class="stats-grid detail-stats-grid" aria-label="إحصائيات المسار">
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="6" cy="19" r="2.5" />
+                <circle cx="18" cy="5" r="2.5" />
+                <path d="M8.5 19H14a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h5.5" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="detailDistance">0 km</p>
+              <p class="stat-label">المسافة الإجمالية</p>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v5l3 2" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="detailDuration">0</p>
+              <p class="stat-label">مدة المسار</p>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9 8l4.5 7L17 11l4 8H3Z" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="detailMaxElevation">0 m</p>
+              <p class="stat-label">أعلى ارتفاع</p>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3v18M4 15l8-8 8 8" />
+              </svg>
+            </div>
+            <div class="stat-body">
+              <p class="stat-value" id="detailDifficultyStat">متوسط</p>
+              <p class="stat-label">مستوى الصعوبة</p>
+            </div>
+          </article>
+        </section>
+
+        <!-- Route Actions Bar -->
+        <section class="actions-bar surface-card" aria-label="إجراءات المسار">
+          <div class="actions-copy">
+            <h2 class="actions-title">ملف المسار والملاحة الميدانية</h2>
+            <p class="actions-desc" id="detailCoordsText"></p>
+          </div>
+          <div class="actions-buttons">
+            <button type="button" id="downloadGpxBtn" class="btn btn-primary">
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" />
+              </svg>
+              <span>تحميل ملف GPX</span>
+            </button>
+
+            <a
+              id="googleMapsBtn"
+              href="https://www.google.com/maps"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn btn-outline"
+            >
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 21s-6-5.6-6-10a6 6 0 1 1 12 0c0 4.4-6 10-6 10z" />
+                <circle cx="12" cy="11" r="2.2" />
+              </svg>
+              <span>فتح نقطة البداية في خرائط Google</span>
+            </a>
+
+            <button type="button" id="copyCoordsBtn" class="btn btn-ghost">نسخ الإحداثيات</button>
+          </div>
+        </section>
+
+        <!-- Interactive Map & Elevation Profile -->
+        <section class="route-visuals-grid" aria-label="خريطة المسار وملف الارتفاعات">
+          <article class="surface-card route-map-card">
+            <div class="card-header-row">
+              <div>
+                <h2 class="card-section-title">على خطى المسار</h2>
+                <p class="card-section-subtitle">خريطة تفاعلية لمسار المشي ونقاط البداية والنهاية</p>
+              </div>
+              <button type="button" id="recenterMapBtn" class="btn btn-subtle">إعادة التوسيط</button>
+            </div>
+
+            <div
+              id="trailMap"
+              class="leaflet-map-frame detail-map-frame"
+              data-testid="trail-map"
+              aria-label="خريطة تفاعلية لمسار الرحلة"
+            ></div>
+
+            <div class="map-legend-bar">
+              <span class="legend-item"><span class="legend-marker legend-start" aria-hidden="true"></span><span>نقطة البداية</span></span>
+              <span class="legend-item"><span class="legend-marker legend-end" aria-hidden="true"></span><span>نقطة الوصول</span></span>
+              <span class="legend-item"><span class="legend-line" aria-hidden="true"></span><span>مسار GPX</span></span>
+            </div>
+          </article>
+
+          <article class="surface-card elevation-card">
+            <div class="card-header-row">
+              <div>
+                <h2 class="card-section-title">كل صعود له حكايته</h2>
+                <p class="card-section-subtitle">ملف الارتفاعات على امتداد المسار</p>
+              </div>
+              <span class="elevation-gain-readout" id="elevationGainBadge">+0 m</span>
+            </div>
+
+            <div class="elevation-metrics-strip">
+              <div class="elev-mini-metric">
+                <span class="elev-mini-label">أدنى نقطة</span>
+                <strong class="elev-mini-value" id="elevMinVal">0 m</strong>
+              </div>
+              <div class="elev-mini-metric">
+                <span class="elev-mini-label">أعلى قمة</span>
+                <strong class="elev-mini-value" id="elevMaxVal">0 m</strong>
+              </div>
+              <div class="elev-mini-metric">
+                <span class="elev-mini-label">متوسط الميل</span>
+                <strong class="elev-mini-value" id="elevGradeVal">0%</strong>
+              </div>
+            </div>
+
+            <div class="elevation-chart-wrap" data-testid="elevation-profile">
+              <svg
+                id="elevationSvg"
+                class="elevation-svg"
+                viewBox="0 0 560 220"
+                direction="ltr"
+                role="img"
+                aria-label="رسم بياني لملف ارتفاعات المسار"
+              ></svg>
+              <div class="elevation-readout-bar" id="elevationHoverReadout">
+                حرّك المؤشر فوق المنحنى لاستعراض الارتفاع عند كل مسافة
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <!-- Field Notes & Quick Facts -->
+        <section class="notes-layout" aria-label="المذكرات الميدانية وتفاصيل المسار">
+          <article class="surface-card field-notes-card">
+            <div class="card-header-row">
+              <div>
+                <h2 class="card-section-title">مذكرات الرحلة الميدانية</h2>
+                <p class="card-section-subtitle">انطباعات الطريق والتفاصيل التي وثّقها صاحب المسار</p>
+              </div>
+              <button type="button" id="editNotesBtn" class="btn btn-subtle" hidden>تعديل المذكرة</button>
+            </div>
+
+            <div id="fieldNotesDisplay" class="field-notes-prose"></div>
+
+            <form id="fieldNotesForm" class="notes-edit-form" hidden>
+              <label for="fieldNotesTextarea" class="sr-only">تعديل مذكرات الرحلة</label>
+              <textarea id="fieldNotesTextarea" class="form-textarea" rows="5"></textarea>
+              <div class="notes-edit-actions">
+                <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+                <button type="button" id="cancelEditNotesBtn" class="btn btn-outline">إلغاء</button>
+              </div>
+            </form>
+          </article>
+
+          <aside class="surface-card trail-facts-card" aria-label="معلومات ميدانية سريعة">
+            <h2 class="card-section-title">بطاقة المسار</h2>
+            <dl class="facts-list" id="trailFactsList"></dl>
+          </aside>
+        </section>
+
+        <!-- Photo Gallery -->
+        <section class="gallery-section" aria-labelledby="galleryHeading">
+          <div class="section-header-inline">
+            <div>
+              <h2 id="galleryHeading" class="section-heading">معرض صور الرحلة</h2>
+              <p class="card-section-subtitle">انقر على الصورة للمعاينة بالحجم الكامل</p>
+            </div>
+            <span class="gallery-count" id="galleryCount">1 صورة</span>
+          </div>
+
+          <div id="tripGalleryGrid" class="gallery-grid" data-testid="trip-gallery"></div>
+        </section>
+
+        <!-- Comments Section (Firestore Subcollection) -->
+        <section class="comments-section surface-card" aria-labelledby="commentsHeading">
+          <div class="section-header-inline comments-header">
+            <div>
+              <h2 id="commentsHeading" class="card-section-title">تعليقات وتجارب الرحّالة</h2>
+              <p class="card-section-subtitle">شارك انطباعك أو نصيحتك حول هذا المسار</p>
+            </div>
+            <span class="gallery-count" id="commentsCount" data-testid="comments-count">0 تعليقات</span>
+          </div>
+
+          <div id="commentAuthPrompt" class="inline-notice" hidden>
+            <span>يرجى تسجيل الدخول لإضافة تعليق على هذا المسار.</span>
+            <a href="./auth.html" class="btn btn-outline">تسجيل الدخول</a>
+          </div>
+
+          <form id="commentForm" class="comment-form" novalidate hidden>
+            <div id="commentErrorBanner" class="form-error-banner" role="alert" hidden></div>
+            <div class="form-group">
+              <label for="commentTextInput" class="form-label">تعليقك حول المسار <span class="required-mark">*</span></label>
+              <textarea
+                id="commentTextInput"
+                name="text"
+                class="form-textarea"
+                rows="3"
+                placeholder="اكتب ملاحظتك حول صعوبة الطريق، أفضل وقت للمشي، أو نقطة استراحة مميزة..."
+                required
+              ></textarea>
+            </div>
+            <div class="comment-form-actions">
+              <button type="submit" class="btn btn-primary" id="submitCommentBtn">إضافة تعليق</button>
+            </div>
+          </form>
+
+          <ul id="commentsList" class="comments-list" data-testid="comments-list" aria-live="polite"></ul>
+          <p id="commentsEmptyNote" class="comments-empty" hidden>لا توجد تعليقات بعد — كن أول من يشارك تجربته في هذا المسار.</p>
+        </section>
+      </div>
+    </main>
+
+    <!-- Photo Lightbox -->
+    <dialog id="photoLightbox" class="lightbox-modal" aria-label="معاينة الصورة">
+      <div class="lightbox-shell">
+        <button type="button" id="closeLightboxBtn" class="lightbox-close" aria-label="إغلاق معاينة الصورة">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+        <img id="lightboxImage" class="lightbox-img" src="" alt="" referrerpolicy="no-referrer" />
+        <p id="lightboxCaption" class="lightbox-caption"></p>
+      </div>
+    </dialog>
+
+    <!-- Delete Confirmation Dialog -->
+    <dialog id="confirmDialog" class="confirm-modal" aria-labelledby="confirmTitle">
+      <div class="confirm-shell">
+        <h2 id="confirmTitle" class="confirm-title">تأكيد حذف الرحلة</h2>
+        <p id="confirmMessage" class="confirm-message">هل أنت متأكد من حذف هذه الرحلة نهائياً؟</p>
+        <div class="confirm-actions">
+          <button type="button" id="confirmAcceptBtn" class="btn btn-danger">تأكيد الحذف</button>
+          <button type="button" id="confirmCancelBtn" class="btn btn-outline">إلغاء</button>
+        </div>
+      </div>
+    </dialog>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p class="footer-brand">درب — لكل رحلة حكاية تستحق أن تُروى</p>
+        <div class="footer-links">
+          <a href="./index.html" class="footer-link">رحلاتي</a>
+          <span aria-hidden="true">·</span>
+          <a href="./add-trip.html" class="footer-link">توثيق رحلة</a>
+        </div>
+      </div>
+    </footer>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
