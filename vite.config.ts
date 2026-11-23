@@ -31,6 +31,8 @@ export default defineConfig(() => {
           main: path.resolve(__dirname, 'index.html'),
           tripDetails: path.resolve(__dirname, 'trip-details.html'),
           addTrip: path.resolve(__dirname, 'add-trip.html'),
+          profile: path.resolve(__dirname, 'profile.html'),
+          leaderboard: path.resolve(__dirname, 'leaderboard.html'),
           auth: path.resolve(__dirname, 'auth.html'),
           admin: path.resolve(__dirname, 'admin.html'),
         },

@@ -4,12 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>توثيق رحلة جديدة — درب</title>
-    <meta name="description" content="أضف رحلتك الجبلية الجديدة مع صورة الغلاف وملف GPX إلى منصة درب." />
+    <meta name="description" content="أضف أو عدّل رحلتك الجبلية مع صورة الغلاف وملف GPX ومعاينة الخريطة التفاعلية في منصة درب." />
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('darb_theme') === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
       rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      crossorigin=""
     />
     <link rel="stylesheet" href="./style.css" />
   </head>
@@ -30,19 +44,39 @@
           </a>
 
           <nav class="main-nav" aria-label="التنقل الرئيسي">
-            <a href="./index.html" class="nav-link">رحلاتي</a>
-            <a href="./index.html#map" class="nav-link">خريطة الرحلات</a>
+            <a href="./index.html" class="nav-link">الرحلات</a>
+            <a href="./index.html#map" class="nav-link">خريطة المملكة</a>
+            <a href="./leaderboard.html" class="nav-link">المتصدرون</a>
             <a href="./index.html#stats" class="nav-link">إحصائياتي</a>
             <a href="./admin.html" class="nav-link nav-link-admin" id="navAdminLink" hidden>لوحة الإدارة</a>
           </nav>
         </div>
 
         <div class="header-actions">
+          <button
+            type="button"
+            id="themeToggleBtn"
+            class="theme-toggle-btn"
+            aria-label="تبديل الوضع الليلي"
+            title="تبديل الوضع الليلي"
+          >
+            <svg class="icon-sm theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+            <svg class="icon-sm theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+          </button>
+
           <div class="user-menu-inline" id="navUserGroup" hidden>
-            <span class="user-greeting" id="navUserName"></span>
+            <a href="./profile.html" class="user-profile-link" id="navUserProfileLink" title="إعدادات الحساب والملف الشخصي">
+              <span class="user-avatar-chip" id="navUserAvatar">ر</span>
+              <span class="user-greeting" id="navUserName"></span>
+            </a>
             <button type="button" class="btn btn-ghost" id="navLogoutBtn">خروج</button>
           </div>
-          <a href="./index.html" class="btn btn-outline">العودة لرحلاتي</a>
+          <a href="./index.html" class="btn btn-outline">العودة للرحلات</a>
         </div>
       </div>
     </header>
@@ -55,14 +89,14 @@
         <a href="./auth.html" class="btn btn-primary" id="addTripGuardLoginLink" hidden>الانتقال لتسجيل الدخول</a>
       </section>
 
-      <!-- Protected Add Trip Workspace (Matching attached Figma layout) -->
+      <!-- Protected Add / Edit Trip Workspace -->
       <div id="addTripWorkspace" hidden>
         <section class="page-intro">
           <div class="intro-copy">
-            <h1 class="page-title">كل مغامرة تستحق أن تُحفظ.</h1>
-            <p class="page-subtitle">أضف تفاصيل رحلتك ودع الذكريات تجد طريقها إلى درب.</p>
+            <h1 class="page-title" id="addTripPageTitle">كل مغامرة تستحق أن تُحفظ.</h1>
+            <p class="page-subtitle" id="addTripPageSubtitle">أضف تفاصيل رحلتك ودع الذكريات تجد طريقها إلى درب.</p>
           </div>
-          <span class="season-label">موسم 2026</span>
+          <span class="season-label" id="addTripModeBadge">توثيق مسار جديد</span>
         </section>
 
         <div class="add-trip-grid">
@@ -89,7 +123,7 @@
 
               <div class="form-row-2">
                 <div class="form-group">
-                  <label for="tripLocationInput" class="form-label">الموقع <span class="required-mark">*</span></label>
+                  <label for="tripLocationInput" class="form-label">الموقع والمنطقة <span class="required-mark">*</span></label>
                   <input
                     type="text"
                     id="tripLocationInput"
@@ -168,6 +202,53 @@
             <fieldset class="form-section-card">
               <legend class="form-section-legend">
                 <span class="step-num">2</span>
+                <span>الخريطة التفاعلية ومسار GPX</span>
+              </legend>
+
+              <div class="form-group">
+                <div class="gpx-upload-bar" id="gpxUploadBar">
+                  <div class="gpx-upload-info">
+                    <span class="gpx-upload-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 16V4m0 0l-4 4m4-4l4 4" />
+                        <path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" />
+                      </svg>
+                    </span>
+                    <div class="gpx-upload-copy">
+                      <p class="gpx-upload-title" id="gpxUploadTitle">أضف مسار الرحلة GPX</p>
+                      <p class="gpx-upload-hint" id="gpxUploadHint">ارفع ملف .gpx لرسم المسار تلقائياً، أو انقر على الخريطة لتحديد نقطة البداية</p>
+                    </div>
+                  </div>
+                  <div class="gpx-upload-actions">
+                    <input
+                      type="file"
+                      id="tripGpxInput"
+                      name="gpxFile"
+                      class="sr-only"
+                      accept=".gpx,application/gpx+xml,application/xml,text/xml"
+                    />
+                    <label for="tripGpxInput" class="btn btn-outline gpx-pick-btn">اختيار ملف</label>
+                    <button type="button" id="removeGpxBtn" class="btn btn-subtle" hidden>إزالة</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <div
+                  id="addTripPreviewMap"
+                  class="leaflet-map-frame add-trip-map-frame"
+                  data-testid="add-trip-preview-map"
+                  aria-label="خريطة معاينة المسار وتحديد نقطة البداية"
+                ></div>
+                <p class="upload-hint map-picker-hint" id="addTripMapCoordsHint">
+                  انقر على الخريطة لتحديد موقع نقطة البداية (الإحداثيات الحالية: 23.88590, 45.07920)
+                </p>
+              </div>
+            </fieldset>
+
+            <fieldset class="form-section-card">
+              <legend class="form-section-legend">
+                <span class="step-num">3</span>
                 <span>لحظات تستحق التوثيق</span>
               </legend>
 
@@ -210,34 +291,6 @@
                   </div>
                 </div>
               </div>
-
-              <div class="form-group">
-                <div class="gpx-upload-bar" id="gpxUploadBar">
-                  <div class="gpx-upload-info">
-                    <span class="gpx-upload-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 16V4m0 0l-4 4m4-4l4 4" />
-                        <path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" />
-                      </svg>
-                    </span>
-                    <div class="gpx-upload-copy">
-                      <p class="gpx-upload-title" id="gpxUploadTitle">أضف مسار الرحلة GPX</p>
-                      <p class="gpx-upload-hint" id="gpxUploadHint">اختياري · ارفع ملف .gpx لعرض المسار وملف الارتفاعات تلقائياً</p>
-                    </div>
-                  </div>
-                  <div class="gpx-upload-actions">
-                    <input
-                      type="file"
-                      id="tripGpxInput"
-                      name="gpxFile"
-                      class="sr-only"
-                      accept=".gpx,application/gpx+xml,application/xml,text/xml"
-                    />
-                    <label for="tripGpxInput" class="btn btn-outline gpx-pick-btn">اختيار ملف</label>
-                    <button type="button" id="removeGpxBtn" class="btn btn-subtle" hidden>إزالة</button>
-                  </div>
-                </div>
-              </div>
             </fieldset>
 
             <div class="modal-form-footer">
@@ -263,7 +316,8 @@
               <h2 class="aside-tips-title">قبل أن تحفظ حكايتك</h2>
               <ul class="aside-tips-list">
                 <li>اختر اسماً واضحاً يعكس المسار والمنطقة</li>
-                <li>ارفع ملف GPX ليتم حساب المسافة والارتفاعات تلقائياً</li>
+                <li>ارفع ملف GPX ليتم رسم المسار وحساب المسافة والارتفاعات تلقائياً</li>
+                <li>أو انقر على الخريطة لتحديد موقع المسار بدقة</li>
                 <li>أضف صورة غلاف عالية الجودة تبرز جمال الطريق</li>
               </ul>
             </div>
@@ -276,13 +330,16 @@
       <div class="container footer-inner">
         <p class="footer-brand">درب — لكل رحلة حكاية تستحق أن تُروى</p>
         <div class="footer-links">
-          <a href="./index.html" class="footer-link">رحلاتي</a>
+          <a href="./index.html" class="footer-link">الرحلات</a>
+          <span aria-hidden="true">·</span>
+          <a href="./leaderboard.html" class="footer-link">المتصدرون</a>
         </div>
       </div>
     </footer>
 
     <div id="toastRegion" class="toast-region" aria-live="polite"></div>
 
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

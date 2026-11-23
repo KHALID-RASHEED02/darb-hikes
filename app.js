@@ -5,6 +5,10 @@
  */
 
 const DEFAULT_HERO_IMAGE = '/src/assets/images/hero_alsoudah_mountains_1795369263890.jpg';
+const DEFAULT_KSA_LAT = 23.8859;
+const DEFAULT_KSA_LNG = 45.0792;
+const THEME_STORAGE_KEY = 'darb_theme';
+
 const ARABIC_MONTHS = [
   'يناير',
   'فبراير',
@@ -21,18 +25,25 @@ const ARABIC_MONTHS = [
 ];
 
 const DIFFICULTY_MAP = {
-  سهل: { label: 'سهل', className: 'trip-badge--easy' },
-  متوسط: { label: 'متوسط', className: 'trip-badge--moderate' },
-  صعب: { label: 'صعب', className: 'trip-badge--hard' },
+  سهل: { label: 'سهل', className: 'trip-badge--easy', markerFill: '#22c55e', markerStroke: '#15803d' },
+  متوسط: { label: 'متوسط', className: 'trip-badge--moderate', markerFill: '#eab308', markerStroke: '#a16207' },
+  صعب: { label: 'صعب', className: 'trip-badge--hard', markerFill: '#ef4444', markerStroke: '#b91c1c' },
 };
 
 const VALID_DIFFICULTIES = new Set(['سهل', 'متوسط', 'صعب']);
+const VALID_ALERT_STATUSES = new Set([
+  'الطريق سالك',
+  'يوجد سيول/وحل',
+  'يتطلب دفع رباعي',
+  'مغلق للصيانة',
+]);
 const ALLOWED_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_GPX_BYTES = 10 * 1024 * 1024;
+const MAX_FAVORITES = 200;
 
 /* ============================================================================
-   1. Pure Formatting, Calculation, Validation & GPX Logic (Unit-Testable)
+   1. Pure Formatting, Badges, Leaderboard, Validation & GPX Logic
    ============================================================================ */
 
 export function formatNum(value, decimals = 0) {
@@ -85,8 +96,161 @@ export function formatHours(hours) {
   return `${formatted} ساعات`;
 }
 
+export function generateShortUserId(uid = '') {
+  const src = String(uid || 'darb').trim();
+  let hash = 2166136261;
+  for (let i = 0; i < src.length; i += 1) {
+    hash ^= src.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let code = '';
+  let val = hash >>> 0;
+  for (let i = 0; i < 6; i += 1) {
+    code += alphabet[val % alphabet.length];
+    val = Math.floor(val / alphabet.length) ^ ((src.charCodeAt(i % Math.max(1, src.length)) || 7) * 31);
+    val = val >>> 0;
+  }
+  return `DRB-${code}`;
+}
+
+const CUSTOM_USER_ID_REGEX = /^[a-zA-Z0-9_\-\u0621-\u064A\u0660-\u0669]+$/;
+
+/**
+ * Validates a customizable User ID handle (alphanumeric, Arabic letters, _, -, 3..24 chars).
+ * @param {string} raw
+ */
+export function validateCustomUserId(raw) {
+  const value = String(raw || '').trim();
+  if (value.length < 3 || value.length > 24) {
+    return {
+      valid: false,
+      value,
+      normalized: value.toLowerCase(),
+      error: 'معرّف المستخدم يجب أن يكون بين 3 و 24 حرفاً.',
+    };
+  }
+  if (!CUSTOM_USER_ID_REGEX.test(value)) {
+    return {
+      valid: false,
+      value,
+      normalized: value.toLowerCase(),
+      error: 'يُسمح فقط بالأحرف الإنجليزية أو العربية والأرقام والرمزين (_) و (-) دون مسافات.',
+    };
+  }
+  return {
+    valid: true,
+    value,
+    normalized: value.toLowerCase(),
+    error: '',
+  };
+}
+
+/**
+ * Produces a deterministic, case-insensitive, Firestore-path-safe document ID for /usernames/{handleKey}.
+ * @param {string} rawUserId
+ */
+export function toHandleDocId(rawUserId) {
+  const normalized = String(rawUserId || '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (/^[a-z0-9_\-]+$/.test(normalized)) {
+    return normalized;
+  }
+  const bytes = new TextEncoder().encode(normalized);
+  let hex = 'u_';
+  for (let i = 0; i < bytes.length; i += 1) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex.slice(0, 128);
+}
+
+/**
+ * Checks case-insensitively whether a candidate User ID is already held by a different user.
+ * @param {{ candidateUserId: string, currentUid: string, claimDoc?: { uid?: string, userId?: string } | null, allTrips?: Array<Record<string, any>> }} params
+ */
+export function isUserIdTakenByAnother({ candidateUserId, currentUid, claimDoc = null, allTrips = [] }) {
+  const targetLower = String(candidateUserId || '').trim().toLowerCase();
+  if (!targetLower) return false;
+
+  if (claimDoc && claimDoc.uid && claimDoc.uid !== currentUid) {
+    return true;
+  }
+
+  const trips = Array.isArray(allTrips) ? allTrips : [];
+  for (const trip of trips) {
+    const ownerUid = getTripOwnerUid(trip);
+    if (!ownerUid || ownerUid === currentUid) continue;
+    const ownerHandle = String(trip.authorUserId || generateShortUserId(ownerUid))
+      .trim()
+      .toLowerCase();
+    if (ownerHandle === targetLower) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Builds the Public Member Profile payload (display name, custom User ID, badges, summary stats, and member trips).
+ * @param {string} uid
+ * @param {Array<Record<string, any>>} allTrips
+ * @param {{ uid?: string, name?: string, userId?: string } | null} [publicProfileDoc]
+ * @param {{ name?: string, userId?: string }} [fallbackInfo]
+ */
+export function buildPublicMemberSummary(uid, allTrips, publicProfileDoc = null, fallbackInfo = {}) {
+  const list = Array.isArray(allTrips) ? allTrips : [];
+  const userTrips = list.filter((trip) => getTripOwnerUid(trip) === uid);
+  const summary = computeSummaryStats(userTrips);
+  const badges = getEarnedBadges(userTrips);
+  const maxElevationGainM = userTrips.reduce(
+    (max, t) => Math.max(max, Number(t.elevationGainM) || 0),
+    0
+  );
+
+  const name =
+    (publicProfileDoc && publicProfileDoc.name) ||
+    userTrips[0]?.authorName ||
+    fallbackInfo.name ||
+    'رحّالة درب';
+  const userId =
+    (publicProfileDoc && publicProfileDoc.userId) ||
+    userTrips[0]?.authorUserId ||
+    fallbackInfo.userId ||
+    generateShortUserId(uid);
+
+  return {
+    uid,
+    name,
+    userId,
+    badges,
+    summary,
+    maxElevationGainM: Math.round(maxElevationGainM),
+    userTrips,
+  };
+}
+
 export function getDifficultyMeta(difficulty) {
   return DIFFICULTY_MAP[difficulty] || DIFFICULTY_MAP['متوسط'];
+}
+
+export function getDifficultyMarkerColor(difficulty) {
+  const meta = getDifficultyMeta(difficulty);
+  return { fill: meta.markerFill, stroke: meta.markerStroke };
+}
+
+export function getAlertStatusClass(status) {
+  switch (status) {
+    case 'الطريق سالك':
+      return 'status-clear';
+    case 'يوجد سيول/وحل':
+      return 'status-mud';
+    case 'يتطلب دفع رباعي':
+      return 'status-4x4';
+    case 'مغلق للصيانة':
+      return 'status-closed';
+    default:
+      return 'status-neutral';
+  }
 }
 
 export function sanitizeMediaUrl(url, fallback = DEFAULT_HERO_IMAGE) {
@@ -112,10 +276,18 @@ export function sanitizeRelativeRedirect(target, fallback = './index.html') {
   if (!trimmed || trimmed.includes('://') || trimmed.startsWith('//') || trimmed.startsWith('javascript:')) {
     return fallback;
   }
-  if (trimmed.startsWith('./') || /^[a-z0-9\-]+\.html(\?[a-zA-Z0-9_=&\-]+)?$/i.test(trimmed)) {
+  if (
+    trimmed.startsWith('./') ||
+    /^[a-z0-9\-]+\.html(\?[a-zA-Z0-9_=&\-]+)?(#[a-zA-Z0-9_\-]+)?$/i.test(trimmed)
+  ) {
     return trimmed;
   }
   return fallback;
+}
+
+export function getTripOwnerUid(trip) {
+  if (!trip) return '';
+  return String(trip.authorId || trip.authorUid || '');
 }
 
 export function computeSummaryStats(trips) {
@@ -144,23 +316,193 @@ export function computeSummaryStats(trips) {
   };
 }
 
+/**
+ * Computes personal statistics strictly scoped to the currently logged-in user's trips.
+ * @param {Array<Record<string, any>>} allTrips
+ * @param {string | null | undefined} currentUid
+ */
+export function computePersonalAnalytics(allTrips, currentUid) {
+  const uid = typeof currentUid === 'string' ? currentUid.trim() : '';
+  const emptyDistribution = ['سهل', 'متوسط', 'صعب'].map((level) => ({
+    level,
+    count: 0,
+    pct: 0,
+  }));
+
+  if (!uid) {
+    return {
+      isAuthenticated: false,
+      hasTrips: false,
+      userTrips: [],
+      summary: computeSummaryStats([]),
+      difficultyDistribution: emptyDistribution,
+      longestTrip: null,
+      highestPeakTrip: null,
+      averageDistanceKm: 0,
+    };
+  }
+
+  const list = Array.isArray(allTrips) ? allTrips : [];
+  const userTrips = list.filter((trip) => getTripOwnerUid(trip) === uid);
+  const summary = computeSummaryStats(userTrips);
+
+  if (userTrips.length === 0) {
+    return {
+      isAuthenticated: true,
+      hasTrips: false,
+      userTrips: [],
+      summary,
+      difficultyDistribution: emptyDistribution,
+      longestTrip: null,
+      highestPeakTrip: null,
+      averageDistanceKm: 0,
+    };
+  }
+
+  const difficultyDistribution = ['سهل', 'متوسط', 'صعب'].map((level) => {
+    const count = userTrips.filter((t) => t.difficulty === level).length;
+    const pct = Math.round((count / userTrips.length) * 100);
+    return { level, count, pct };
+  });
+
+  const longestTrip = [...userTrips].sort(
+    (a, b) => (Number(b.distanceKm) || 0) - (Number(a.distanceKm) || 0)
+  )[0];
+  const highestPeakTrip = [...userTrips].sort(
+    (a, b) => (Number(b.maxElevationM) || 0) - (Number(a.maxElevationM) || 0)
+  )[0];
+  const averageDistanceKm = Math.round((summary.totalKm / userTrips.length) * 10) / 10;
+
+  return {
+    isAuthenticated: true,
+    hasTrips: true,
+    userTrips,
+    summary,
+    difficultyDistribution,
+    longestTrip,
+    highestPeakTrip,
+    averageDistanceKm,
+  };
+}
+
+export function computeUserBadges(userTrips) {
+  const list = Array.isArray(userTrips) ? userTrips : [];
+  const tripCount = list.length;
+  const hasHighPeak = list.some((t) => Number(t.elevationGainM) > 1000);
+
+  return [
+    {
+      id: 'beginner_explorer',
+      title: 'مستكشف مبتدئ',
+      description: 'توثيق أول رحلة جبلية على منصة درب',
+      icon: '🧭',
+      earned: tripCount >= 1,
+      progressLabel: tripCount >= 1 ? 'مكتسبة' : 'انشر رحلتك الأولى',
+    },
+    {
+      id: 'summit_conqueror',
+      title: 'قاهر القمم',
+      description: 'إتمام وتوثيق مسار بارتفاع مكتسب يتجاوز 1,000 متر',
+      icon: '⛰️',
+      earned: hasHighPeak,
+      progressLabel: hasHighPeak ? 'مكتسبة' : 'تحتاج مساراً بارتفاع > 1,000 m',
+    },
+    {
+      id: 'darb_voyager',
+      title: 'رحّال درب',
+      description: 'نشر 10 رحلات جبلية موثّقة أو أكثر',
+      icon: '🏅',
+      earned: tripCount >= 10,
+      progressLabel: tripCount >= 10 ? 'مكتسبة' : `${formatNum(tripCount)} / 10 رحلات`,
+    },
+  ];
+}
+
+export function getEarnedBadges(userTrips) {
+  return computeUserBadges(userTrips).filter((b) => b.earned);
+}
+
+export function groupTripsByAuthor(allTrips) {
+  const map = new Map();
+  const list = Array.isArray(allTrips) ? allTrips : [];
+  for (const trip of list) {
+    const uid = getTripOwnerUid(trip);
+    if (!uid) continue;
+    if (!map.has(uid)) map.set(uid, []);
+    map.get(uid).push(trip);
+  }
+  return map;
+}
+
+export function buildLeaderboard(allTrips, options = {}) {
+  const list = Array.isArray(allTrips) ? allTrips : [];
+  const { sortBy = 'trips', region = 'all' } = options;
+
+  const globalByAuthor = groupTripsByAuthor(list);
+  const filteredTrips =
+    region && region !== 'all'
+      ? list.filter((t) => String(t.region || '').trim() === String(region).trim())
+      : list;
+
+  const entriesMap = new Map();
+  for (const trip of filteredTrips) {
+    const uid = getTripOwnerUid(trip);
+    if (!uid) continue;
+    if (!entriesMap.has(uid)) {
+      entriesMap.set(uid, {
+        uid,
+        name: trip.authorName || 'رحّالة درب',
+        userId: trip.authorUserId || generateShortUserId(uid),
+        tripCount: 0,
+        totalKm: 0,
+        maxElevationGainM: 0,
+        badges: getEarnedBadges(globalByAuthor.get(uid) || []),
+      });
+    }
+    const entry = entriesMap.get(uid);
+    entry.tripCount += 1;
+    entry.totalKm += Number(trip.distanceKm) || 0;
+    const gain = Number(trip.elevationGainM) || 0;
+    if (gain > entry.maxElevationGainM) entry.maxElevationGainM = gain;
+    if (trip.authorName) entry.name = trip.authorName;
+    if (trip.authorUserId) entry.userId = trip.authorUserId;
+  }
+
+  const entries = Array.from(entriesMap.values()).map((e) => ({
+    ...e,
+    totalKm: Math.round(e.totalKm * 10) / 10,
+    maxElevationGainM: Math.round(e.maxElevationGainM),
+  }));
+
+  entries.sort((a, b) => {
+    if (sortBy === 'distance') {
+      if (b.totalKm !== a.totalKm) return b.totalKm - a.totalKm;
+      return b.tripCount - a.tripCount;
+    }
+    if (b.tripCount !== a.tripCount) return b.tripCount - a.tripCount;
+    return b.totalKm - a.totalKm;
+  });
+
+  return entries;
+}
+
 export function filterTrips(trips, options = {}) {
   const list = Array.isArray(trips) ? trips : [];
   const {
     tab = 'all',
     query = '',
-    currentYear = new Date().getFullYear(),
     currentUid = null,
+    favorites = [],
   } = options;
 
+  const favSet = new Set(Array.isArray(favorites) ? favorites : []);
   const q = String(query || '').trim().toLowerCase();
 
   return list.filter((trip) => {
-    if (tab === 'this-year') {
-      const tripYear = Number(trip.year) || Number(String(trip.dateIso || '').slice(0, 4));
-      if (tripYear !== Number(currentYear)) return false;
-    } else if (tab === 'mine') {
-      if (!currentUid || trip.authorUid !== currentUid) return false;
+    if (tab === 'mine') {
+      if (!currentUid || getTripOwnerUid(trip) !== currentUid) return false;
+    } else if (tab === 'favorites') {
+      if (!favSet.has(trip.id)) return false;
     }
 
     if (!q) return true;
@@ -171,6 +513,7 @@ export function filterTrips(trips, options = {}) {
       trip.region,
       trip.difficulty,
       trip.authorName,
+      trip.authorUserId,
       trip.notes,
     ]
       .filter(Boolean)
@@ -220,13 +563,53 @@ export function computeElevationMetrics(profile, totalDistanceKm = 0) {
   };
 }
 
+export function computeAverageRating(comments) {
+  const list = Array.isArray(comments) ? comments : [];
+  let sum = 0;
+  let count = 0;
+  for (const item of list) {
+    const r = Number(item.rating);
+    if (Number.isFinite(r) && r >= 1 && r <= 5) {
+      sum += r;
+      count += 1;
+    }
+  }
+  return {
+    average: count > 0 ? Math.round((sum / count) * 10) / 10 : 0,
+    count,
+  };
+}
+
+export function buildShareText(trip, pageUrl) {
+  const title = trip?.title || 'مسار جبلي في درب';
+  const region = trip?.location || trip?.region || 'المملكة العربية السعودية';
+  const distance = formatNum(trip?.distanceKm || 0, 1);
+  const gain = formatNum(trip?.elevationGainM || 0, 0);
+  const difficulty = getDifficultyMeta(trip?.difficulty).label;
+  const author = trip?.authorName || 'رحّالة درب';
+  const authorCode = trip?.authorUserId || generateShortUserId(getTripOwnerUid(trip));
+
+  return [
+    `🏔️ رحلة في منصة درب: ${title}`,
+    `📍 الموقع: ${region}`,
+    `📏 المسافة: ${distance} km | ⛰️ الارتفاع المكتسب: +${gain} m`,
+    `⚡ الصعوبة: ${difficulty}`,
+    `🥾 الناشر: ${author} (${authorCode})`,
+    `🔗 رابط المسار: ${pageUrl}`,
+  ].join('\n');
+}
+
 export function isSuperAdminProfile(userProfile) {
   return Boolean(userProfile && userProfile.role === 'superadmin' && !userProfile.isBanned);
 }
 
 export function canDeleteTrip(trip, userProfile) {
   if (!trip || !userProfile || userProfile.isBanned) return false;
-  return userProfile.role === 'superadmin' || trip.authorUid === userProfile.uid;
+  return userProfile.role === 'superadmin' || getTripOwnerUid(trip) === userProfile.uid;
+}
+
+export function canEditTrip(trip, userProfile) {
+  return canDeleteTrip(trip, userProfile);
 }
 
 export function canEditNotes(trip, userProfile) {
@@ -238,8 +621,12 @@ export function canDeleteComment(comment, trip, userProfile) {
   return (
     userProfile.role === 'superadmin' ||
     comment.authorUid === userProfile.uid ||
-    (trip && trip.authorUid === userProfile.uid)
+    (trip && getTripOwnerUid(trip) === userProfile.uid)
   );
+}
+
+export function canDeleteAlert(alertItem, trip, userProfile) {
+  return canDeleteComment(alertItem, trip, userProfile);
 }
 
 export function validateTripInput(input = {}) {
@@ -291,6 +678,44 @@ export function validateCommentInput(input = {}) {
     errors.push('يرجى كتابة تعليق لا يقل عن حرفين.');
   } else if (text.length > 1000) {
     errors.push('التعليق يجب ألا يتجاوز 1000 حرف.');
+  }
+  if (input.rating !== undefined && input.rating !== null) {
+    const rating = Number(input.rating);
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      errors.push('يرجى اختيار تقييم صحيح بين 1 و 5 نجوم.');
+    }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+export function validateAlertInput(input = {}) {
+  const errors = [];
+  const status = String(input.status || '').trim();
+  const note = String(input.note || '').trim();
+  if (!VALID_ALERT_STATUSES.has(status)) {
+    errors.push('يرجى اختيار حالة مسار صالحة.');
+  }
+  if (note.length > 500) {
+    errors.push('الملاحظة الميدانية يجب ألا تتجاوز 500 حرف.');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+export function validateProfileUpdateInput(input = {}) {
+  const errors = [];
+  const name = String(input.name || '').trim();
+  const dateOfBirth = String(input.dateOfBirth || '').trim();
+  if (name.length < 2 || name.length > 80) {
+    errors.push('يرجى إدخال اسم ظاهر صحيح (من 2 إلى 80 حرفاً).');
+  }
+  if (input.userId !== undefined) {
+    const idCheck = validateCustomUserId(input.userId);
+    if (!idCheck.valid) {
+      errors.push(idCheck.error);
+    }
+  }
+  if (dateOfBirth && !/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) {
+    errors.push('صيغة تاريخ الميلاد غير صحيحة (YYYY-MM-DD).');
   }
   return { valid: errors.length === 0, errors };
 }
@@ -411,7 +836,11 @@ export function parseGpxXml(xmlString) {
 
   const sampledProfile = downsampleArray(cumulative, 24).map((p, idx, arr) => ({
     km: Number.isFinite(p.km) ? p.km : idx,
-    m: p.m !== null ? p.m : safeMinEle + Math.round((idx / Math.max(1, arr.length - 1)) * Math.max(0, safeMaxEle - safeMinEle)),
+    m:
+      p.m !== null
+        ? p.m
+        : safeMinEle +
+          Math.round((idx / Math.max(1, arr.length - 1)) * Math.max(0, safeMaxEle - safeMinEle)),
   }));
 
   return {
@@ -428,12 +857,18 @@ export function parseGpxXml(xmlString) {
   };
 }
 
-export function buildDefaultTrailData(distanceKm, elevationGainM) {
+/**
+ * @param {number} distanceKm
+ * @param {number} elevationGainM
+ * @param {number | null} [customLat]
+ * @param {number | null} [customLng]
+ */
+export function buildDefaultTrailData(distanceKm, elevationGainM, customLat = null, customLng = null) {
   const safeDist = Math.max(0.5, Number(distanceKm) || 5);
   const safeGain = Math.max(0, Math.round(Number(elevationGainM) || 0));
-  const baseLat = 18.2735;
-  const baseLng = 42.3702;
-  const baseEle = 1200;
+  const baseLat = Number.isFinite(Number(customLat)) && customLat !== null ? Number(customLat) : DEFAULT_KSA_LAT;
+  const baseLng = Number.isFinite(Number(customLng)) && customLng !== null ? Number(customLng) : DEFAULT_KSA_LNG;
+  const baseEle = 900;
 
   const steps = 8;
   const routePoints = [];
@@ -441,8 +876,8 @@ export function buildDefaultTrailData(distanceKm, elevationGainM) {
 
   for (let i = 0; i < steps; i += 1) {
     const ratio = i / (steps - 1);
-    const lat = Math.round((baseLat + ratio * 0.022 + Math.sin(ratio * Math.PI) * 0.004) * 1e6) / 1e6;
-    const lng = Math.round((baseLng + ratio * 0.018 + Math.cos(ratio * Math.PI) * 0.003) * 1e6) / 1e6;
+    const lat = Math.round((baseLat + ratio * 0.018 + Math.sin(ratio * Math.PI) * 0.004) * 1e6) / 1e6;
+    const lng = Math.round((baseLng + ratio * 0.015 + (Math.cos(ratio * Math.PI) - 1) * 0.003) * 1e6) / 1e6;
     routePoints.push({ lat, lng });
 
     const km = Math.round(ratio * safeDist * 10) / 10;
@@ -485,7 +920,8 @@ export function buildGpxXml(trip) {
         profile.length > 0
           ? Math.min(profile.length - 1, Math.round((idx / Math.max(1, points.length - 1)) * (profile.length - 1)))
           : -1;
-      const ele = profIdx >= 0 && Number.isFinite(Number(profile[profIdx]?.m)) ? Number(profile[profIdx].m) : null;
+      const ele =
+        profIdx >= 0 && Number.isFinite(Number(profile[profIdx]?.m)) ? Number(profile[profIdx].m) : null;
       return ele !== null
         ? `      <trkpt lat="${lat}" lon="${lng}"><ele>${ele}</ele></trkpt>`
         : `      <trkpt lat="${lat}" lon="${lng}" />`;
@@ -522,6 +958,8 @@ export function translateAuthError(code) {
       return 'كلمة المرور ضعيفة؛ يرجى اختيار 6 أحرف على الأقل.';
     case 'auth/invalid-email':
       return 'صيغة البريد الإلكتروني غير صحيحة.';
+    case 'auth/requires-recent-login':
+      return 'لأسباب أمنية، يرجى إدخال كلمة المرور الحالية لإعادة التحقق قبل إتمام هذا التغيير.';
     case 'auth/operation-not-allowed':
       return 'تسجيل الدخول بالبريد الإلكتروني غير مفعّل بعد في Firebase Console. يمكنك المتابعة عبر حساب Google أو تفعيل Email/Password من لوحة Firebase.';
     case 'auth/popup-closed-by-user':
@@ -536,10 +974,53 @@ export function translateAuthError(code) {
 }
 
 /* ============================================================================
-   2. Browser Runtime & Firebase v10+ Modular Controllers
+   2. Dark Mode Controller (Instant, Zero-Flash, Persisted in localStorage)
+   ============================================================================ */
+
+function initDarkModeToggle() {
+  const applyTheme = (theme) => {
+    const isDark = theme === 'dark';
+    if (isDark) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    const toggleBtn = document.getElementById('themeToggleBtn');
+    if (toggleBtn) {
+      toggleBtn.setAttribute('aria-pressed', String(isDark));
+      toggleBtn.setAttribute('aria-label', isDark ? 'التبديل إلى الوضع النهاري' : 'التبديل إلى الوضع الليلي');
+      toggleBtn.setAttribute('title', isDark ? 'الوضع النهاري' : 'الوضع الليلي');
+    }
+  };
+
+  let savedTheme = 'light';
+  try {
+    savedTheme = localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+  } catch {
+    savedTheme = 'light';
+  }
+  applyTheme(savedTheme);
+
+  const toggleBtn = document.getElementById('themeToggleBtn');
+  toggleBtn?.addEventListener('click', () => {
+    const nextTheme =
+      document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // Ignore storage quota restrictions
+    }
+    applyTheme(nextTheme);
+  });
+}
+
+/* ============================================================================
+   3. Browser Runtime & Firebase v10+ Modular Controllers
    ============================================================================ */
 
 async function bootstrapBrowserApp() {
+  initDarkModeToggle();
+
   const [fbConfigMod, authMod, firestoreMod, storageMod] = await Promise.all([
     import('./firebase-config.js'),
     import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js'),
@@ -555,6 +1036,10 @@ async function bootstrapBrowserApp() {
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     updateProfile,
+    updateEmail,
+    updatePassword,
+    reauthenticateWithCredential,
+    EmailAuthProvider,
     signInWithPopup,
     GoogleAuthProvider,
     signOut,
@@ -564,12 +1049,15 @@ async function bootstrapBrowserApp() {
     collection,
     doc,
     getDoc,
+    getDocs,
     setDoc,
     addDoc,
     updateDoc,
     deleteDoc,
+    writeBatch,
     onSnapshot,
     query,
+    where,
     orderBy,
     serverTimestamp,
   } = firestoreMod;
@@ -637,6 +1125,7 @@ async function bootstrapBrowserApp() {
     const loginBtn = document.getElementById('navLoginBtn');
     const userGroup = document.getElementById('navUserGroup');
     const userNameEl = document.getElementById('navUserName');
+    const userAvatarEl = document.getElementById('navUserAvatar');
     const adminLink = document.getElementById('navAdminLink');
     const bannedBanner = document.getElementById('globalBannedBanner');
 
@@ -646,6 +1135,9 @@ async function bootstrapBrowserApp() {
     if (loginBtn) loginBtn.hidden = signedIn;
     if (userGroup) userGroup.hidden = !signedIn;
     if (userNameEl) userNameEl.textContent = signedIn ? profile.name : '';
+    if (userAvatarEl) {
+      userAvatarEl.textContent = signedIn ? (profile.name || 'ر').trim().charAt(0) : 'ر';
+    }
 
     if (adminLink) {
       adminLink.hidden = !isSuperAdminProfile(profile);
@@ -661,7 +1153,7 @@ async function bootstrapBrowserApp() {
     try {
       await signOut(auth);
       showToast('تم تسجيل الخروج بنجاح.');
-      if (page === 'admin' || page === 'add-trip') {
+      if (page === 'admin' || page === 'add-trip' || page === 'profile') {
         window.location.href = './index.html';
       }
     } catch {
@@ -681,25 +1173,84 @@ async function bootstrapBrowserApp() {
 
     const isBootstrappedVerified =
       Boolean(fbUser.emailVerified) && isConfiguredSuperAdminEmail(fbUser.email);
+    const fallbackShortId = generateShortUserId(fbUser.uid);
+
+    async function syncPublicIdentityRecords(uid, name, shortId, isBanned) {
+      if (isBanned) return;
+      const handleKey = toHandleDocId(shortId);
+      if (handleKey) {
+        try {
+          const claimRef = doc(db, 'usernames', handleKey);
+          const existingClaim = await getDoc(claimRef);
+          if (!existingClaim.exists() || existingClaim.data()?.uid === uid) {
+            await setDoc(claimRef, {
+              uid,
+              userId: shortId,
+              normalizedId: shortId.toLowerCase(),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        } catch {
+          // Non-fatal background handle claim sync
+        }
+      }
+      try {
+        await setDoc(doc(db, 'publicProfiles', uid), {
+          uid,
+          name,
+          userId: shortId,
+          updatedAt: serverTimestamp(),
+        });
+      } catch {
+        // Non-fatal background public profile sync
+      }
+    }
 
     if (snap.exists()) {
       const data = snap.data();
+      let shortId = data.userId || fallbackShortId;
+      const resolvedName = data.name || fbUser.displayName || 'مستخدم درب';
+      // Backfill unique short userId / userIdLower for legacy user profiles if missing
+      if ((!data.userId || !data.userIdLower) && !data.isBanned) {
+        try {
+          await updateDoc(userRef, {
+            userId: shortId,
+            userIdLower: shortId.toLowerCase(),
+          });
+        } catch {
+          // Non-fatal backfill skip
+        }
+      }
+      syncPublicIdentityRecords(fbUser.uid, resolvedName, shortId, Boolean(data.isBanned));
       return {
         uid: fbUser.uid,
-        name: data.name || fbUser.displayName || 'مستخدم درب',
+        userId: shortId,
+        userIdLower: shortId.toLowerCase(),
+        name: resolvedName,
         email: data.email || fbUser.email || '',
+        dateOfBirth: data.dateOfBirth || '',
+        favorites: Array.isArray(data.favorites) ? data.favorites : [],
         role: isBootstrappedVerified ? 'superadmin' : data.role || 'user',
         isBanned: Boolean(data.isBanned),
         createdAt: data.createdAt || null,
       };
     }
 
-    const rawName = (preferredName || fbUser.displayName || (fbUser.email || '').split('@')[0] || 'رحّالة درب').trim();
+    const rawName = (
+      preferredName ||
+      fbUser.displayName ||
+      (fbUser.email || '').split('@')[0] ||
+      'رحّالة درب'
+    ).trim();
     const safeName = rawName.length >= 2 ? rawName.slice(0, 80) : `${rawName} درب`;
     const newProfile = {
       uid: fbUser.uid,
+      userId: fallbackShortId,
+      userIdLower: fallbackShortId.toLowerCase(),
       name: safeName,
       email: (fbUser.email || 'user@darb.com').trim(),
+      dateOfBirth: '',
+      favorites: [],
       role: isBootstrappedVerified ? 'superadmin' : 'user',
       isBanned: false,
       createdAt: serverTimestamp(),
@@ -707,6 +1258,7 @@ async function bootstrapBrowserApp() {
 
     try {
       await setDoc(userRef, newProfile);
+      syncPublicIdentityRecords(fbUser.uid, safeName, fallbackShortId, false);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, path);
     }
@@ -715,6 +1267,43 @@ async function bootstrapBrowserApp() {
       ...newProfile,
       role: isBootstrappedVerified ? 'superadmin' : 'user',
     };
+  }
+
+  async function toggleFavoriteTrip(tripId) {
+    if (!state.firebaseUser || !state.userProfile) {
+      showToast('يرجى تسجيل الدخول لحفظ المسارات في المفضلة.');
+      window.location.href = `./auth.html?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+      return false;
+    }
+    if (state.userProfile.isBanned) {
+      showToast('تم تعليق حسابك ولا يمكنك تعديل المفضلة.');
+      return false;
+    }
+
+    const currentFavs = Array.isArray(state.userProfile.favorites) ? [...state.userProfile.favorites] : [];
+    const exists = currentFavs.includes(tripId);
+    let nextFavs;
+    if (exists) {
+      nextFavs = currentFavs.filter((id) => id !== tripId);
+    } else {
+      if (currentFavs.length >= MAX_FAVORITES) {
+        showToast(`الحد الأقصى للمسارات المحفوظة هو ${MAX_FAVORITES} مسار.`);
+        return false;
+      }
+      nextFavs = [...currentFavs, tripId];
+    }
+
+    const path = `users/${state.userProfile.uid}`;
+    try {
+      await updateDoc(doc(db, 'users', state.userProfile.uid), { favorites: nextFavs });
+      state.userProfile = { ...state.userProfile, favorites: nextFavs };
+      showToast(exists ? 'تمت إزالة المسار من المفضلة.' : 'تم حفظ المسار في المفضلة.');
+      notifyAuthListeners();
+      return !exists;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+      return exists;
+    }
   }
 
   function onAuthReady(cb) {
@@ -746,8 +1335,11 @@ async function bootstrapBrowserApp() {
     } catch {
       state.userProfile = {
         uid: fbUser.uid,
+        userId: generateShortUserId(fbUser.uid),
         name: fbUser.displayName || 'مستخدم درب',
         email: fbUser.email || '',
+        dateOfBirth: '',
+        favorites: [],
         role:
           fbUser.emailVerified && isConfiguredSuperAdminEmail(fbUser.email)
             ? 'superadmin'
@@ -760,7 +1352,7 @@ async function bootstrapBrowserApp() {
     notifyAuthListeners();
   });
 
-  /* ---- Helper: Compress Cover Image to DataURL fallback ---- */
+  /* ---- Shared DOM Helpers ---- */
 
   function compressImageToDataUrl(file) {
     return new Promise((resolve, reject) => {
@@ -818,18 +1410,290 @@ async function bootstrapBrowserApp() {
     return svg;
   }
 
+  function renderBadgesInline(container, badges, maxCount = 3) {
+    if (!container) return;
+    container.replaceChildren();
+    const earned = Array.isArray(badges) ? badges.slice(0, maxCount) : [];
+    for (const badge of earned) {
+      const chip = document.createElement('span');
+      chip.className = 'badge-chip';
+      chip.title = badge.description || badge.title;
+      chip.textContent = `${badge.icon} ${badge.title}`;
+      container.appendChild(chip);
+    }
+  }
+
+  /* ---- Reusable Public Member Profile Modal (ملف العضو العام) ---- */
+
+  function ensurePublicProfileModal() {
+    let dialog = document.getElementById('publicProfileModal');
+    if (dialog) return dialog;
+
+    dialog = document.createElement('dialog');
+    dialog.id = 'publicProfileModal';
+    dialog.className = 'public-profile-modal';
+    dialog.setAttribute('aria-labelledby', 'publicProfileName');
+    dialog.setAttribute('data-testid', 'public-profile-modal');
+
+    const shell = document.createElement('div');
+    shell.className = 'public-profile-shell';
+
+    const header = document.createElement('div');
+    header.className = 'public-profile-header';
+
+    const identity = document.createElement('div');
+    identity.className = 'public-profile-identity';
+
+    const avatar = document.createElement('div');
+    avatar.id = 'publicProfileAvatar';
+    avatar.className = 'profile-avatar-lg';
+    avatar.setAttribute('aria-hidden', 'true');
+    avatar.textContent = 'ر';
+
+    const copy = document.createElement('div');
+    const nameH2 = document.createElement('h2');
+    nameH2.id = 'publicProfileName';
+    nameH2.className = 'profile-display-name';
+    nameH2.textContent = 'ملف العضو';
+
+    const idRow = document.createElement('div');
+    idRow.className = 'public-profile-id-row';
+    const idTag = document.createElement('span');
+    idTag.id = 'publicProfileUserId';
+    idTag.className = 'publisher-id-tag';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.id = 'publicProfileCopyIdBtn';
+    copyBtn.className = 'btn btn-subtle';
+    copyBtn.textContent = 'نسخ المعرّف';
+    copyBtn.addEventListener('click', async () => {
+      const code = idTag.textContent || '';
+      if (!code) return;
+      try {
+        await navigator.clipboard.writeText(code);
+        showToast(`تم نسخ معرّف العضو: ${code}`);
+      } catch {
+        showToast(`معرّف العضو: ${code}`);
+      }
+    });
+    idRow.append(idTag, copyBtn);
+
+    const badgesRow = document.createElement('div');
+    badgesRow.id = 'publicProfileBadges';
+    badgesRow.className = 'badges-inline-row';
+    badgesRow.setAttribute('aria-label', 'شارات الإنجاز');
+
+    copy.append(nameH2, idRow, badgesRow);
+    identity.append(avatar, copy);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.id = 'publicProfileCloseBtn';
+    closeBtn.className = 'icon-close-btn';
+    closeBtn.setAttribute('aria-label', 'إغلاق ملف العضو');
+    closeBtn.appendChild(makeSvgIcon('M18 6L6 18M6 6l12 12', 'icon-sm'));
+    closeBtn.addEventListener('click', () => {
+      if (dialog.open) dialog.close();
+    });
+
+    header.append(identity, closeBtn);
+
+    const statsGrid = document.createElement('div');
+    statsGrid.className = 'public-profile-stats';
+    statsGrid.innerHTML = '';
+    const statDefs = [
+      ['publicProfileStatTrips', 'إجمالي الرحلات', '0'],
+      ['publicProfileStatKm', 'إجمالي المسافة', '0.0 km'],
+      ['publicProfileStatGain', 'أعلى ارتفاع مكتسب', '0 m'],
+    ];
+    for (const [id, label, initial] of statDefs) {
+      const box = document.createElement('div');
+      box.className = 'public-profile-stat-box';
+      const l = document.createElement('span');
+      l.className = 'elev-mini-label';
+      l.textContent = label;
+      const v = document.createElement('strong');
+      v.id = id;
+      v.className = 'elev-mini-value';
+      v.textContent = initial;
+      box.append(l, v);
+      statsGrid.appendChild(box);
+    }
+
+    const sectionHead = document.createElement('div');
+    sectionHead.className = 'public-profile-section-head';
+    const tripsTitle = document.createElement('h3');
+    tripsTitle.className = 'card-section-title';
+    tripsTitle.textContent = 'الرحلات المنشورة';
+    const tripsCountBadge = document.createElement('span');
+    tripsCountBadge.id = 'publicProfileTripsBadge';
+    tripsCountBadge.className = 'season-label';
+    tripsCountBadge.textContent = '0 رحلات';
+    sectionHead.append(tripsTitle, tripsCountBadge);
+
+    const tripsGrid = document.createElement('div');
+    tripsGrid.id = 'publicProfileTripsGrid';
+    tripsGrid.className = 'public-profile-trips-grid';
+    tripsGrid.setAttribute('data-testid', 'public-profile-trips-grid');
+
+    const emptyMsg = document.createElement('div');
+    emptyMsg.id = 'publicProfileEmpty';
+    emptyMsg.className = 'empty-state';
+    emptyMsg.hidden = true;
+    const emptyP = document.createElement('p');
+    emptyP.className = 'empty-desc';
+    emptyP.textContent = 'لم يقم هذا العضو بنشر رحلات بعد.';
+    emptyMsg.appendChild(emptyP);
+
+    shell.append(header, statsGrid, sectionHead, tripsGrid, emptyMsg);
+    dialog.appendChild(shell);
+
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog && dialog.open) {
+        dialog.close();
+      }
+    });
+
+    document.body.appendChild(dialog);
+    return dialog;
+  }
+
+  async function openPublicMemberProfile({ uid, name = '', userId = '', preloadedTrips = null }) {
+    if (!uid) return;
+    const dialog = ensurePublicProfileModal();
+
+    const avatarEl = document.getElementById('publicProfileAvatar');
+    const nameEl = document.getElementById('publicProfileName');
+    const idEl = document.getElementById('publicProfileUserId');
+    const badgesEl = document.getElementById('publicProfileBadges');
+    const tripsStatEl = document.getElementById('publicProfileStatTrips');
+    const kmStatEl = document.getElementById('publicProfileStatKm');
+    const gainStatEl = document.getElementById('publicProfileStatGain');
+    const tripsBadgeEl = document.getElementById('publicProfileTripsBadge');
+    const tripsGridEl = document.getElementById('publicProfileTripsGrid');
+    const emptyEl = document.getElementById('publicProfileEmpty');
+
+    const initialName = name || 'رحّالة درب';
+    const initialId = userId || generateShortUserId(uid);
+    if (avatarEl) avatarEl.textContent = initialName.trim().charAt(0) || 'ر';
+    if (nameEl) nameEl.textContent = initialName;
+    if (idEl) idEl.textContent = initialId;
+    if (tripsGridEl) {
+      tripsGridEl.replaceChildren();
+      const skel = document.createElement('div');
+      skel.className = 'skeleton-card skeleton-sm';
+      tripsGridEl.appendChild(skel);
+    }
+    if (emptyEl) emptyEl.hidden = true;
+
+    if (!dialog.open) dialog.showModal();
+
+    let publicProfileDoc = null;
+    try {
+      const pubSnap = await getDoc(doc(db, 'publicProfiles', uid));
+      if (pubSnap.exists()) {
+        publicProfileDoc = pubSnap.data();
+      }
+    } catch {
+      // Fallback gracefully to trip attribution if public profile doc doesn't exist yet
+    }
+
+    let sourceTrips = Array.isArray(preloadedTrips) ? preloadedTrips : null;
+    if (!sourceTrips) {
+      try {
+        const snap = await getDocs(query(collection(db, 'trips'), orderBy('createdAt', 'desc')));
+        sourceTrips = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      } catch (error) {
+        sourceTrips = [];
+        handleFirestoreError(error, OperationType.LIST, 'trips');
+      }
+    }
+
+    const member = buildPublicMemberSummary(uid, sourceTrips, publicProfileDoc, {
+      name: initialName,
+      userId: initialId,
+    });
+
+    if (avatarEl) avatarEl.textContent = member.name.trim().charAt(0) || 'ر';
+    if (nameEl) nameEl.textContent = member.name;
+    if (idEl) idEl.textContent = member.userId;
+    renderBadgesInline(badgesEl, member.badges, 3);
+
+    if (tripsStatEl) tripsStatEl.textContent = formatNum(member.summary.totalTrips, 0);
+    if (kmStatEl) kmStatEl.textContent = `${formatNum(member.summary.totalKm, 1)} كم`;
+    if (gainStatEl) {
+      gainStatEl.replaceChildren();
+      const gainNum = document.createElement('span');
+      gainNum.dir = 'ltr';
+      gainNum.textContent = `+${formatNum(member.maxElevationGainM, 0)}`;
+      gainStatEl.append(gainNum, document.createTextNode(' م'));
+    }
+    if (tripsBadgeEl) tripsBadgeEl.textContent = `${formatNum(member.userTrips.length, 0)} رحلة`;
+
+    if (!tripsGridEl) return;
+    tripsGridEl.replaceChildren();
+
+    if (member.userTrips.length === 0) {
+      if (emptyEl) emptyEl.hidden = false;
+      return;
+    }
+
+    if (emptyEl) emptyEl.hidden = true;
+    for (const trip of member.userTrips) {
+      const link = document.createElement('a');
+      link.className = 'public-trip-mini-card';
+      link.href = `./trip-details.html?id=${encodeURIComponent(trip.id)}`;
+
+      const media = document.createElement('div');
+      media.className = 'public-trip-mini-media';
+      const img = document.createElement('img');
+      img.src = sanitizeMediaUrl(trip.coverImageUrl, DEFAULT_HERO_IMAGE);
+      img.alt = trip.title;
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+
+      const diffMeta = getDifficultyMeta(trip.difficulty);
+      const badge = document.createElement('span');
+      badge.className = `trip-badge ${diffMeta.className}`;
+      badge.textContent = diffMeta.label;
+      media.append(img, badge);
+
+      const body = document.createElement('div');
+      body.className = 'public-trip-mini-body';
+      const h4 = document.createElement('h4');
+      h4.className = 'public-trip-mini-title';
+      h4.textContent = trip.title;
+
+      const meta = document.createElement('div');
+      meta.className = 'public-trip-mini-meta';
+      const locSpan = document.createElement('span');
+      locSpan.textContent = trip.location || trip.region || '';
+      const distSpan = document.createElement('span');
+      distSpan.textContent = `${formatNum(trip.distanceKm, 1)} كم · ${formatHours(trip.durationHours)}`;
+      meta.append(locSpan, distSpan);
+
+      const dateSpan = document.createElement('span');
+      dateSpan.className = 'trip-card-date';
+      dateSpan.textContent = formatIsoDate(trip.dateIso);
+
+      body.append(h4, meta, dateSpan);
+      link.append(media, body);
+      tripsGridEl.appendChild(link);
+    }
+  }
+
   /* ==========================================================================
      PAGE 1: Dashboard (index.html)
      ========================================================================== */
 
   function initDashboardPage() {
     let allTrips = [];
+    let authorTripsMap = new Map();
     let activeTab = 'all';
     let searchQuery = '';
     let activeNavView = 'trips';
-    let inlineMapMode = false;
-    let inlineMapInstance = null;
-    let inlineMapLayer = null;
+    let kingdomMapInstance = null;
+    let kingdomMapLayer = null;
     let fullMapInstance = null;
     let fullMapLayer = null;
 
@@ -844,6 +1708,8 @@ async function bootstrapBrowserApp() {
     const counterNote = document.getElementById('tripsCounterNote');
     const searchInput = document.getElementById('tripSearchInput');
     const countAllEl = document.getElementById('countAll');
+    const countMineEl = document.getElementById('countMine');
+    const countFavEl = document.getElementById('countFavorites');
 
     const statTrips = document.getElementById('statTotalTrips');
     const statKm = document.getElementById('statTotalKm');
@@ -856,10 +1722,6 @@ async function bootstrapBrowserApp() {
     const heroMeta = document.getElementById('heroMeta');
     const heroCta = document.getElementById('heroCta');
     const heroCtaText = document.getElementById('heroCtaText');
-
-    const gridToggle = document.getElementById('gridViewToggle');
-    const mapToggle = document.getElementById('mapViewToggle');
-    const inlineMapPanel = document.getElementById('inlineMapPanel');
 
     const navButtons = Array.from(document.querySelectorAll('[data-nav-view]'));
     const filterTabs = Array.from(document.querySelectorAll('.filter-tab'));
@@ -881,6 +1743,7 @@ async function bootstrapBrowserApp() {
       }
       if (targetView === 'map') renderFullMapView();
       if (targetView === 'stats') renderAnalyticsView();
+      if (targetView === 'trips') renderKingdomExploreMap();
     }
 
     for (const btn of navButtons) {
@@ -921,41 +1784,34 @@ async function bootstrapBrowserApp() {
       renderTripsFeed();
     });
 
-    gridToggle?.addEventListener('click', () => {
-      inlineMapMode = false;
-      gridToggle.classList.add('is-active');
-      gridToggle.setAttribute('aria-pressed', 'true');
-      mapToggle?.classList.remove('is-active');
-      mapToggle?.setAttribute('aria-pressed', 'false');
-      if (inlineMapPanel) inlineMapPanel.hidden = true;
-    });
-
-    mapToggle?.addEventListener('click', () => {
-      inlineMapMode = true;
-      mapToggle.classList.add('is-active');
-      mapToggle.setAttribute('aria-pressed', 'true');
-      gridToggle?.classList.remove('is-active');
-      gridToggle?.setAttribute('aria-pressed', 'false');
-      if (inlineMapPanel) inlineMapPanel.hidden = false;
-      renderInlineMap(getFilteredTrips());
-    });
-
     function getFilteredTrips() {
       return filterTrips(allTrips, {
         tab: activeTab,
         query: searchQuery,
-        currentYear: new Date().getFullYear(),
         currentUid: state.userProfile?.uid || null,
+        favorites: state.userProfile?.favorites || [],
       });
+    }
+
+    function updateTabCounts() {
+      const uid = state.userProfile?.uid || null;
+      const favs = state.userProfile?.favorites || [];
+      const mineCount = uid ? allTrips.filter((t) => getTripOwnerUid(t) === uid).length : 0;
+      const favCount = allTrips.filter((t) => favs.includes(t.id)).length;
+      if (countAllEl) countAllEl.textContent = formatNum(allTrips.length, 0);
+      if (countMineEl) countMineEl.textContent = formatNum(mineCount, 0);
+      if (countFavEl) countFavEl.textContent = formatNum(favCount, 0);
     }
 
     function updateSummaryAndHero() {
       const stats = computeSummaryStats(allTrips);
       if (statTrips) statTrips.textContent = formatNum(stats.totalTrips, 0);
       if (statKm) statKm.textContent = formatNum(stats.totalKm, 1);
-      if (statHours) statHours.textContent = formatNum(stats.totalHours, Number.isInteger(stats.totalHours) ? 0 : 1);
+      if (statHours) {
+        statHours.textContent = formatNum(stats.totalHours, Number.isInteger(stats.totalHours) ? 0 : 1);
+      }
       if (statElevation) statElevation.textContent = formatNum(stats.totalElevation, 0);
-      if (countAllEl) countAllEl.textContent = formatNum(allTrips.length, 0);
+      updateTabCounts();
 
       if (allTrips.length > 0) {
         const latest = allTrips[0];
@@ -1011,6 +1867,32 @@ async function bootstrapBrowserApp() {
       badge.textContent = diff.label;
       media.appendChild(badge);
 
+      // Card Action Overlay (Favorite + Edit/Delete for owner or Super Admin)
+      const overlay = document.createElement('div');
+      overlay.className = 'card-actions-overlay';
+
+      const isFav = Boolean(state.userProfile?.favorites?.includes(trip.id));
+      const favBtn = document.createElement('button');
+      favBtn.type = 'button';
+      favBtn.className = `card-fav-btn${isFav ? ' is-favorite' : ''}`;
+      favBtn.setAttribute('aria-pressed', String(isFav));
+      favBtn.setAttribute('aria-label', isFav ? `إزالة ${trip.title} من المفضلة` : `حفظ ${trip.title} في المفضلة`);
+      favBtn.title = isFav ? 'إزالة من المفضلة' : 'حفظ في المفضلة';
+      favBtn.appendChild(makeSvgIcon('M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z', 'icon-xs'));
+      favBtn.addEventListener('click', () => {
+        toggleFavoriteTrip(trip.id);
+      });
+      overlay.appendChild(favBtn);
+
+      if (canEditTrip(trip, state.userProfile)) {
+        const editLink = document.createElement('a');
+        editLink.className = 'card-edit-btn';
+        editLink.href = `./add-trip.html?edit=${encodeURIComponent(trip.id)}`;
+        editLink.textContent = 'تعديل';
+        editLink.setAttribute('aria-label', `تعديل رحلة ${trip.title}`);
+        overlay.appendChild(editLink);
+      }
+
       if (canDeleteTrip(trip, state.userProfile)) {
         const delBtn = document.createElement('button');
         delBtn.type = 'button';
@@ -1030,8 +1912,9 @@ async function bootstrapBrowserApp() {
             handleFirestoreError(error, OperationType.DELETE, `trips/${trip.id}`);
           }
         });
-        media.appendChild(delBtn);
+        overlay.appendChild(delBtn);
       }
+      media.appendChild(overlay);
 
       const body = document.createElement('div');
       body.className = 'trip-card-body';
@@ -1049,7 +1932,6 @@ async function bootstrapBrowserApp() {
       const dateEl = document.createElement('span');
       dateEl.className = 'trip-card-date';
       dateEl.textContent = formatIsoDate(trip.dateIso);
-
       head.append(h3, dateEl);
 
       const locP = document.createElement('p');
@@ -1058,6 +1940,45 @@ async function bootstrapBrowserApp() {
       const locSpan = document.createElement('span');
       locSpan.textContent = trip.location;
       locP.appendChild(locSpan);
+
+      // Clickable Publisher Attribution + Unique User ID + Top Badge
+      const ownerUid = getTripOwnerUid(trip);
+      const authorShortId = trip.authorUserId || generateShortUserId(ownerUid);
+      const pubRow = document.createElement('div');
+      pubRow.className = 'trip-card-publisher';
+
+      const pubTrigger = document.createElement('button');
+      pubTrigger.type = 'button';
+      pubTrigger.className = 'publisher-trigger';
+      pubTrigger.setAttribute('aria-label', `عرض الملف العام للعضو ${trip.authorName || 'رحّالة درب'}`);
+
+      const pubName = document.createElement('span');
+      pubName.className = 'publisher-name';
+      pubName.textContent = trip.authorName || 'رحّالة درب';
+
+      const pubId = document.createElement('span');
+      pubId.className = 'publisher-id-tag';
+      pubId.textContent = authorShortId;
+
+      pubTrigger.append(pubName, pubId);
+      pubTrigger.addEventListener('click', () => {
+        openPublicMemberProfile({
+          uid: ownerUid,
+          name: trip.authorName || 'رحّالة درب',
+          userId: authorShortId,
+          preloadedTrips: allTrips,
+        });
+      });
+
+      pubRow.appendChild(pubTrigger);
+
+      const earnedBadges = getEarnedBadges(authorTripsMap.get(ownerUid) || []);
+      if (earnedBadges.length > 0) {
+        const badgeChip = document.createElement('span');
+        badgeChip.className = 'badge-chip';
+        badgeChip.textContent = `${earnedBadges[0].icon} ${earnedBadges[0].title}`;
+        pubRow.appendChild(badgeChip);
+      }
 
       const footer = document.createElement('div');
       footer.className = 'trip-card-footer';
@@ -1081,32 +2002,68 @@ async function bootstrapBrowserApp() {
       arrowLink.appendChild(makeSvgIcon('M19 12H5M11 18l-6-6 6-6', 'icon-sm'));
 
       footer.append(metrics, arrowLink);
-      body.append(head, locP, footer);
+      body.append(head, locP, pubRow, footer);
       card.append(media, body);
       return card;
     }
 
     function renderTripsFeed() {
       if (!tripsGrid || !emptyState) return;
+      updateTabCounts();
       const filtered = getFilteredTrips();
       tripsGrid.replaceChildren();
 
-      if (allTrips.length === 0) {
+      if (filtered.length === 0) {
         emptyState.hidden = false;
-        if (emptyTitle) emptyTitle.textContent = 'لا توجد رحلات مضافة بعد، كن أول من يوثق مساره!';
-        if (emptyDesc) {
-          emptyDesc.textContent = 'سجّل دخولك وأضف أول رحلة جبلية مع صورة الغلاف وملف GPX لتظهر هنا مباشرة.';
+        if (footerRow) footerRow.hidden = true;
+
+        if (activeTab === 'mine' && !searchQuery.trim()) {
+          if (emptyTitle) {
+            emptyTitle.textContent = state.userProfile
+              ? 'لم تقم بنشر أي رحلة بعد'
+              : 'سجّل دخولك لاستعراض رحلاتك الخاصة';
+          }
+          if (emptyDesc) {
+            emptyDesc.textContent = state.userProfile
+              ? 'ابدأ الآن بتوثيق أول مسار لك في الطبيعة ليظهر في قائمة رحلاتك.'
+              : 'قم بتسجيل الدخول للوصول إلى رحلاتك وإدارتها وتعديلها.';
+          }
+          if (emptyAddBtn) {
+            emptyAddBtn.hidden = false;
+            emptyAddBtn.href = state.userProfile ? './add-trip.html' : './auth.html';
+            emptyAddBtn.textContent = state.userProfile ? 'إضافة رحلة جديدة' : 'تسجيل الدخول';
+          }
+          if (resetFiltersBtn) resetFiltersBtn.hidden = true;
+        } else if (activeTab === 'favorites' && !searchQuery.trim()) {
+          if (emptyTitle) {
+            emptyTitle.textContent = state.userProfile
+              ? 'لا توجد مسارات محفوظة في المفضلة بعد'
+              : 'سجّل دخولك لعرض مساراتك المحفوظة';
+          }
+          if (emptyDesc) {
+            emptyDesc.textContent = state.userProfile
+              ? 'انقر على أيقونة الحفظ في أي رحلة لإضافتها إلى قائمة مساراتك المفضلة.'
+              : 'قم بتسجيل الدخول لحفظ المسارات التي تود تجربتها لاحقاً.';
+          }
+          if (emptyAddBtn) emptyAddBtn.hidden = true;
+          if (resetFiltersBtn) resetFiltersBtn.hidden = false;
+        } else if (allTrips.length === 0) {
+          if (emptyTitle) emptyTitle.textContent = 'لا توجد رحلات مضافة بعد، كن أول من يوثق مساره!';
+          if (emptyDesc) {
+            emptyDesc.textContent = 'سجّل دخولك وأضف أول رحلة جبلية مع صورة الغلاف وملف GPX لتظهر هنا مباشرة.';
+          }
+          if (emptyAddBtn) {
+            emptyAddBtn.hidden = false;
+            emptyAddBtn.href = './add-trip.html';
+            emptyAddBtn.textContent = 'إضافة أول رحلة';
+          }
+          if (resetFiltersBtn) resetFiltersBtn.hidden = true;
+        } else {
+          if (emptyTitle) emptyTitle.textContent = 'لا توجد رحلات مطابقة لبحثك الحالي.';
+          if (emptyDesc) emptyDesc.textContent = 'جرّب تعديل كلمة البحث أو الانتقال إلى تبويب «استكشف / رحلات الجميع».';
+          if (emptyAddBtn) emptyAddBtn.hidden = true;
+          if (resetFiltersBtn) resetFiltersBtn.hidden = false;
         }
-        if (emptyAddBtn) emptyAddBtn.hidden = false;
-        if (resetFiltersBtn) resetFiltersBtn.hidden = true;
-        if (footerRow) footerRow.hidden = true;
-      } else if (filtered.length === 0) {
-        emptyState.hidden = false;
-        if (emptyTitle) emptyTitle.textContent = 'لا توجد رحلات مطابقة لخيارات التصفية الحالية.';
-        if (emptyDesc) emptyDesc.textContent = 'جرّب تعديل كلمة البحث أو اختيار تبويب «كل الرحلات».';
-        if (emptyAddBtn) emptyAddBtn.hidden = true;
-        if (resetFiltersBtn) resetFiltersBtn.hidden = false;
-        if (footerRow) footerRow.hidden = true;
       } else {
         emptyState.hidden = true;
         const frag = document.createDocumentFragment();
@@ -1120,18 +2077,12 @@ async function bootstrapBrowserApp() {
         }
       }
 
-      if (inlineMapMode) {
-        renderInlineMap(filtered);
-      }
-      if (activeNavView === 'map') {
-        renderFullMapView();
-      }
-      if (activeNavView === 'stats') {
-        renderAnalyticsView();
-      }
+      if (activeNavView === 'trips') renderKingdomExploreMap();
+      if (activeNavView === 'map') renderFullMapView();
+      if (activeNavView === 'stats') renderAnalyticsView();
     }
 
-    function populateLeafletMap(containerId, existingMap, existingLayer, trips) {
+    function populateDifficultyMap(containerId, existingMap, existingLayer, trips) {
       if (typeof window.L === 'undefined') return { map: existingMap, layer: existingLayer };
       const el = document.getElementById(containerId);
       if (!el) return { map: existingMap, layer: existingLayer };
@@ -1139,7 +2090,7 @@ async function bootstrapBrowserApp() {
       let map = existingMap;
       let layer = existingLayer;
       if (!map) {
-        map = window.L.map(el, { scrollWheelZoom: false }).setView([23.8859, 45.0792], 5);
+        map = window.L.map(el, { scrollWheelZoom: false }).setView([DEFAULT_KSA_LAT, DEFAULT_KSA_LNG], 5);
         window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; OpenStreetMap',
           maxZoom: 18,
@@ -1156,23 +2107,24 @@ async function bootstrapBrowserApp() {
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
         bounds.push([lat, lng]);
 
+        const markerColor = getDifficultyMarkerColor(trip.difficulty);
         const popupWrap = document.createElement('div');
         popupWrap.className = 'darb-map-popup';
         const strong = document.createElement('strong');
         strong.textContent = trip.title;
         const meta = document.createElement('span');
-        meta.textContent = `${trip.location} · ${formatNum(trip.distanceKm, 1)} كم`;
+        meta.textContent = `${trip.location} · ${getDifficultyMeta(trip.difficulty).label} · ${formatNum(trip.distanceKm, 1)} كم`;
         const link = document.createElement('a');
         link.href = `./trip-details.html?id=${encodeURIComponent(trip.id)}`;
         link.textContent = 'عرض تفاصيل الرحلة ←';
         popupWrap.append(strong, meta, link);
 
         window.L.circleMarker([lat, lng], {
-          radius: 8,
-          color: '#ffffff',
-          weight: 2,
-          fillColor: '#234736',
-          fillOpacity: 1,
+          radius: 9,
+          color: markerColor.stroke,
+          weight: 2.5,
+          fillColor: markerColor.fill,
+          fillOpacity: 0.92,
         })
           .bindPopup(popupWrap)
           .addTo(layer);
@@ -1185,21 +2137,21 @@ async function bootstrapBrowserApp() {
         } else if (bounds.length > 1) {
           map.fitBounds(bounds, { padding: [36, 36] });
         } else {
-          map.setView([23.8859, 45.0792], 5);
+          map.setView([DEFAULT_KSA_LAT, DEFAULT_KSA_LNG], 5);
         }
-      }, 60);
+      }, 80);
 
       return { map, layer };
     }
 
-    function renderInlineMap(trips) {
-      const res = populateLeafletMap('inlineTripsMap', inlineMapInstance, inlineMapLayer, trips);
-      inlineMapInstance = res.map;
-      inlineMapLayer = res.layer;
+    function renderKingdomExploreMap() {
+      const res = populateDifficultyMap('kingdomExploreMap', kingdomMapInstance, kingdomMapLayer, allTrips);
+      kingdomMapInstance = res.map;
+      kingdomMapLayer = res.layer;
     }
 
     function renderFullMapView() {
-      const res = populateLeafletMap('fullTripsMap', fullMapInstance, fullMapLayer, allTrips);
+      const res = populateDifficultyMap('fullTripsMap', fullMapInstance, fullMapLayer, allTrips);
       fullMapInstance = res.map;
       fullMapLayer = res.layer;
 
@@ -1227,7 +2179,7 @@ async function bootstrapBrowserApp() {
         t.textContent = trip.title;
         const m = document.createElement('span');
         m.className = 'map-trip-item-meta';
-        m.textContent = `${trip.location} · ${formatNum(trip.distanceKm, 1)} كم`;
+        m.textContent = `${trip.location} · ${getDifficultyMeta(trip.difficulty).label} · ${formatNum(trip.distanceKm, 1)} كم`;
         copy.append(t, m);
 
         const linkSpan = document.createElement('span');
@@ -1248,50 +2200,60 @@ async function bootstrapBrowserApp() {
     }
 
     function renderAnalyticsView() {
+      const authGuard = document.getElementById('statsAuthGuard');
+      const contentWrap = document.getElementById('statsContentWrap');
+      const emptyNotice = document.getElementById('statsEmptyNotice');
       const grid = document.getElementById('analyticsGrid');
+      const pTrips = document.getElementById('personalStatTrips');
+      const pKm = document.getElementById('personalStatKm');
+      const pHours = document.getElementById('personalStatHours');
+      const pElevation = document.getElementById('personalStatElevation');
       if (!grid) return;
-      grid.replaceChildren();
 
-      if (allTrips.length === 0) {
-        const card = document.createElement('article');
-        card.className = 'surface-card';
-        const title = document.createElement('h2');
-        title.className = 'card-section-title';
-        title.textContent = 'لا توجد بيانات إحصائية بعد';
-        const sub = document.createElement('p');
-        sub.className = 'card-section-subtitle';
-        sub.textContent = 'لا توجد رحلات مضافة بعد، كن أول من يوثق مساره!';
-        card.append(title, sub);
-        grid.appendChild(card);
+      const currentUid = state.firebaseUser?.uid || state.userProfile?.uid || null;
+      const analytics = computePersonalAnalytics(allTrips, currentUid);
+
+      if (!analytics.isAuthenticated) {
+        if (authGuard) authGuard.hidden = false;
+        if (contentWrap) contentWrap.hidden = true;
+        grid.replaceChildren();
         return;
       }
 
-      // Card 1: Difficulty Breakdown
+      if (authGuard) authGuard.hidden = true;
+      if (contentWrap) contentWrap.hidden = false;
+      if (emptyNotice) emptyNotice.hidden = analytics.hasTrips;
+
+      if (pTrips) pTrips.textContent = formatNum(analytics.summary.totalTrips, 0);
+      if (pKm) pKm.textContent = formatNum(analytics.summary.totalKm, 1);
+      if (pHours) pHours.textContent = formatNum(analytics.summary.totalHours, 0);
+      if (pElevation) pElevation.textContent = formatNum(analytics.summary.totalElevation, 0);
+
+      grid.replaceChildren();
+
       const diffCard = document.createElement('article');
       diffCard.className = 'surface-card';
       const diffH2 = document.createElement('h2');
       diffH2.className = 'card-section-title';
-      diffH2.textContent = 'توزيع الرحلات حسب الصعوبة';
+      diffH2.textContent = 'توزيع رحلاتي حسب الصعوبة';
       const barsWrap = document.createElement('div');
       barsWrap.className = 'analytics-bars';
 
-      for (const level of ['سهل', 'متوسط', 'صعب']) {
-        const count = allTrips.filter((t) => t.difficulty === level).length;
-        const pct = Math.round((count / allTrips.length) * 100);
+      for (const item of analytics.difficultyDistribution) {
         const row = document.createElement('div');
         const head = document.createElement('div');
         head.className = 'bar-row-head';
         const lSpan = document.createElement('span');
-        lSpan.textContent = level;
+        lSpan.textContent = item.level;
         const vSpan = document.createElement('strong');
-        vSpan.textContent = `${formatNum(count)} (${formatNum(pct)}%)`;
+        vSpan.textContent = `${formatNum(item.count)} (${formatNum(item.pct)}%)`;
         head.append(lSpan, vSpan);
 
         const track = document.createElement('div');
         track.className = 'bar-track';
         const fill = document.createElement('div');
         fill.className = 'bar-fill';
-        fill.style.width = `${pct}%`;
+        fill.style.width = `${item.pct}%`;
         track.appendChild(fill);
 
         row.append(head, track);
@@ -1299,23 +2261,30 @@ async function bootstrapBrowserApp() {
       }
       diffCard.append(diffH2, barsWrap);
 
-      // Card 2: Records & Highlights
       const highCard = document.createElement('article');
       highCard.className = 'surface-card';
       const highH2 = document.createElement('h2');
       highH2.className = 'card-section-title';
-      highH2.textContent = 'أبرز الأرقام القياسية';
+      highH2.textContent = 'أرقامي القياسية';
       const ul = document.createElement('ul');
       ul.className = 'highlights-list';
 
-      const longest = [...allTrips].sort((a, b) => (b.distanceKm || 0) - (a.distanceKm || 0))[0];
-      const highest = [...allTrips].sort((a, b) => (b.maxElevationM || 0) - (a.maxElevationM || 0))[0];
-      const avgDist = computeSummaryStats(allTrips).totalKm / allTrips.length;
-
       const items = [
-        ['أطول مسار', `${longest.title} (${formatNum(longest.distanceKm, 1)} كم)`],
-        ['أعلى قمة مسجّلة', `${highest.title} (${formatNum(highest.maxElevationM)} m)`],
-        ['متوسط مسافة الرحلة', `${formatNum(avgDist, 1)} كم`],
+        ['إجمالي رحلاتي', `${formatNum(analytics.summary.totalTrips, 0)} رحلة`],
+        ['إجمالي المسافة المقطوعة', `${formatNum(analytics.summary.totalKm, 1)} كم`],
+        [
+          'أطول مسار',
+          analytics.longestTrip
+            ? `${analytics.longestTrip.title} (${formatNum(analytics.longestTrip.distanceKm, 1)} كم)`
+            : '0 كم',
+        ],
+        [
+          'أعلى قمة مسجّلة',
+          analytics.highestPeakTrip
+            ? `${analytics.highestPeakTrip.title} (${formatNum(analytics.highestPeakTrip.maxElevationM)} m)`
+            : '0 m',
+        ],
+        ['متوسط مسافة الرحلة', `${formatNum(analytics.averageDistanceKm, 1)} كم`],
       ];
 
       for (const [label, val] of items) {
@@ -1334,10 +2303,13 @@ async function bootstrapBrowserApp() {
       grid.append(diffCard, highCard);
     }
 
-    // Re-render card moderation buttons when auth state changes
     onAuthReady(() => {
       renderTripsFeed();
+      if (activeNavView === 'stats') renderAnalyticsView();
     });
+
+    // Initialize Kingdom Map immediately even before Firestore finishes
+    renderKingdomExploreMap();
 
     const tripsQuery = query(collection(db, 'trips'), orderBy('createdAt', 'desc'));
     onSnapshot(
@@ -1345,8 +2317,10 @@ async function bootstrapBrowserApp() {
       (snapshot) => {
         if (loadingState) loadingState.hidden = true;
         allTrips = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        authorTripsMap = groupTripsByAuthor(allTrips);
         updateSummaryAndHero();
         renderTripsFeed();
+        if (activeNavView === 'stats') renderAnalyticsView();
       },
       (error) => {
         if (loadingState) loadingState.hidden = true;
@@ -1387,12 +2361,22 @@ async function bootstrapBrowserApp() {
     let trailLayer = null;
     let routeBounds = null;
     let commentsUnsub = null;
+    let alertsUnsub = null;
+    let latestComments = [];
+    let latestAlerts = [];
+    let authorBadges = [];
 
     function renderElevationSvg(profile, distanceKm) {
       const svg = document.getElementById('elevationSvg');
       const readout = document.getElementById('elevationHoverReadout');
       if (!svg) return;
-      const pts = Array.isArray(profile) && profile.length >= 2 ? profile : [{ km: 0, m: 0 }, { km: distanceKm || 1, m: 0 }];
+      const pts =
+        Array.isArray(profile) && profile.length >= 2
+          ? profile
+          : [
+              { km: 0, m: 0 },
+              { km: distanceKm || 1, m: 0 },
+            ];
 
       const W = 560;
       const H = 220;
@@ -1429,17 +2413,16 @@ async function bootstrapBrowserApp() {
       grad.setAttribute('y2', '1');
       const s1 = document.createElementNS(ns, 'stop');
       s1.setAttribute('offset', '0%');
-      s1.setAttribute('stop-color', '#234736');
-      s1.setAttribute('stop-opacity', '0.32');
+      s1.setAttribute('stop-color', '#2f6b4f');
+      s1.setAttribute('stop-opacity', '0.34');
       const s2 = document.createElementNS(ns, 'stop');
       s2.setAttribute('offset', '100%');
-      s2.setAttribute('stop-color', '#234736');
+      s2.setAttribute('stop-color', '#2f6b4f');
       s2.setAttribute('stop-opacity', '0.02');
       grad.append(s1, s2);
       defs.appendChild(grad);
       svg.appendChild(defs);
 
-      // Horizontal grid lines + right Y-axis ticks (Western numerals)
       for (let i = 0; i <= 3; i += 1) {
         const y = padTop + (i / 3) * plotH;
         const val = Math.round(maxElev - (i / 3) * span);
@@ -1448,14 +2431,16 @@ async function bootstrapBrowserApp() {
         line.setAttribute('x2', String(W - padRight));
         line.setAttribute('y1', String(y));
         line.setAttribute('y2', String(y));
-        line.setAttribute('stroke', '#e2e8e2');
+        line.setAttribute('stroke', 'currentColor');
+        line.setAttribute('stroke-opacity', '0.16');
         line.setAttribute('stroke-dasharray', '4 4');
         svg.appendChild(line);
 
         const label = document.createElementNS(ns, 'text');
         label.setAttribute('x', String(W - padRight + 10));
         label.setAttribute('y', String(y + 4));
-        label.setAttribute('fill', '#66756b');
+        label.setAttribute('fill', 'currentColor');
+        label.setAttribute('fill-opacity', '0.7');
         label.setAttribute('font-size', '11');
         label.setAttribute('text-anchor', 'start');
         label.textContent = `${formatNum(val)} m`;
@@ -1475,20 +2460,20 @@ async function bootstrapBrowserApp() {
       const strokePath = document.createElementNS(ns, 'path');
       strokePath.setAttribute('d', linePathD);
       strokePath.setAttribute('fill', 'none');
-      strokePath.setAttribute('stroke', '#234736');
+      strokePath.setAttribute('stroke', '#2f6b4f');
       strokePath.setAttribute('stroke-width', '2.5');
       strokePath.setAttribute('stroke-linecap', 'round');
       strokePath.setAttribute('stroke-linejoin', 'round');
       svg.appendChild(strokePath);
 
-      // X-axis distance labels (start, mid, end)
       for (const frac of [0, 0.5, 1]) {
         const x = padLeft + frac * plotW;
         const kmVal = Math.round(frac * maxKm * 10) / 10;
         const xText = document.createElementNS(ns, 'text');
         xText.setAttribute('x', String(x));
         xText.setAttribute('y', String(H - 10));
-        xText.setAttribute('fill', '#66756b');
+        xText.setAttribute('fill', 'currentColor');
+        xText.setAttribute('fill-opacity', '0.7');
         xText.setAttribute('font-size', '11');
         xText.setAttribute('text-anchor', frac === 0 ? 'start' : frac === 1 ? 'end' : 'middle');
         xText.textContent = `${formatNum(kmVal, 1)} km`;
@@ -1497,7 +2482,7 @@ async function bootstrapBrowserApp() {
 
       const hoverDot = document.createElementNS(ns, 'circle');
       hoverDot.setAttribute('r', '5');
-      hoverDot.setAttribute('fill', '#234736');
+      hoverDot.setAttribute('fill', '#2f6b4f');
       hoverDot.setAttribute('stroke', '#ffffff');
       hoverDot.setAttribute('stroke-width', '2');
       hoverDot.setAttribute('visibility', 'hidden');
@@ -1562,7 +2547,7 @@ async function bootstrapBrowserApp() {
         radius: 7,
         color: '#ffffff',
         weight: 2,
-        fillColor: '#234736',
+        fillColor: '#22c55e',
         fillOpacity: 1,
       })
         .bindTooltip('نقطة البداية')
@@ -1572,7 +2557,7 @@ async function bootstrapBrowserApp() {
         radius: 7,
         color: '#ffffff',
         weight: 2,
-        fillColor: '#b85d28',
+        fillColor: '#ea580c',
         fillOpacity: 1,
       })
         .bindTooltip('نقطة الوصول')
@@ -1588,20 +2573,42 @@ async function bootstrapBrowserApp() {
     function updateDetailsPermissionUI() {
       if (!currentTrip) return;
       const deleteBtn = document.getElementById('detailDeleteBtn');
+      const editBtn = document.getElementById('detailEditBtn');
+      const favBtn = document.getElementById('detailFavBtn');
+      const favLabel = document.getElementById('detailFavLabel');
       const editNotesBtn = document.getElementById('editNotesBtn');
       const commentForm = document.getElementById('commentForm');
       const commentAuthPrompt = document.getElementById('commentAuthPrompt');
+      const alertForm = document.getElementById('trailAlertForm');
+      const alertAuthPrompt = document.getElementById('alertAuthPrompt');
 
       if (deleteBtn) deleteBtn.hidden = !canDeleteTrip(currentTrip, state.userProfile);
+      if (editBtn) {
+        editBtn.hidden = !canEditTrip(currentTrip, state.userProfile);
+        editBtn.href = `./add-trip.html?edit=${encodeURIComponent(currentTrip.id)}`;
+      }
       if (editNotesBtn) editNotesBtn.hidden = !canEditNotes(currentTrip, state.userProfile);
 
-      const canComment = Boolean(state.userProfile && !state.userProfile.isBanned);
-      if (commentForm) commentForm.hidden = !canComment;
+      if (favBtn && favLabel) {
+        const isFav = Boolean(state.userProfile?.favorites?.includes(currentTrip.id));
+        favBtn.classList.toggle('is-favorite', isFav);
+        favBtn.setAttribute('aria-pressed', String(isFav));
+        favLabel.textContent = isFav ? 'محفوظة في المفضلة' : 'حفظ في المفضلة';
+      }
+
+      const canPost = Boolean(state.userProfile && !state.userProfile.isBanned);
+      if (commentForm) commentForm.hidden = !canPost;
       if (commentAuthPrompt) {
-        commentAuthPrompt.hidden = canComment;
-        if (state.userProfile?.isBanned) {
-          commentAuthPrompt.firstElementChild.textContent =
-            'تم تعليق حسابك ولا يمكنك إضافة تعليقات جديدة.';
+        commentAuthPrompt.hidden = canPost;
+        if (state.userProfile?.isBanned && commentAuthPrompt.firstElementChild) {
+          commentAuthPrompt.firstElementChild.textContent = 'تم تعليق حسابك ولا يمكنك إضافة تقييمات جديدة.';
+        }
+      }
+      if (alertForm) alertForm.hidden = !canPost;
+      if (alertAuthPrompt) {
+        alertAuthPrompt.hidden = canPost;
+        if (state.userProfile?.isBanned && alertAuthPrompt.firstElementChild) {
+          alertAuthPrompt.firstElementChild.textContent = 'تم تعليق حسابك ولا يمكنك نشر تنبيهات ميدانية.';
         }
       }
     }
@@ -1618,13 +2625,39 @@ async function bootstrapBrowserApp() {
         if (el) el.textContent = text;
       };
 
+      const ownerUid = getTripOwnerUid(trip);
+      const authorShortId = trip.authorUserId || generateShortUserId(ownerUid);
+      const authorDisplayName = trip.authorName || 'رحّالة درب';
+      const openTripAuthorProfile = () => {
+        openPublicMemberProfile({
+          uid: ownerUid,
+          name: authorDisplayName,
+          userId: authorShortId,
+        });
+      };
+
       setText('breadcrumbRegion', trip.region || trip.location);
       setText('breadcrumbTitle', trip.title);
       setText('detailDifficultyBadge', getDifficultyMeta(trip.difficulty).label);
-      setText('detailAuthorLine', `موثّقة بواسطة ${trip.authorName || 'رحّالة درب'}`);
+
+      const authorLineEl = document.getElementById('detailAuthorLine');
+      if (authorLineEl) {
+        authorLineEl.replaceChildren();
+        const prefix = document.createElement('span');
+        prefix.textContent = 'موثّقة بواسطة ';
+        const authorBtn = document.createElement('button');
+        authorBtn.type = 'button';
+        authorBtn.className = 'publisher-trigger publisher-trigger--hero';
+        authorBtn.setAttribute('aria-label', `عرض الملف العام للعضو ${authorDisplayName}`);
+        authorBtn.textContent = `${authorDisplayName} · ${authorShortId}`;
+        authorBtn.addEventListener('click', openTripAuthorProfile);
+        authorLineEl.append(prefix, authorBtn);
+      }
+
       setText('detailTitle', trip.title);
       setText('detailLocation', trip.location);
       setText('detailDate', formatIsoDate(trip.dateIso));
+      renderBadgesInline(document.getElementById('detailAuthorBadges'), authorBadges);
 
       const coverUrl = sanitizeMediaUrl(trip.coverImageUrl, DEFAULT_HERO_IMAGE);
       const heroImg = document.getElementById('detailHeroImage');
@@ -1664,31 +2697,40 @@ async function bootstrapBrowserApp() {
             : 'لم يُضف صاحب الرحلة مذكرات ميدانية مفصّلة بعد.';
       }
 
-      // Quick Facts List
       const factsList = document.getElementById('trailFactsList');
       if (factsList) {
         factsList.replaceChildren();
         const facts = [
-          ['المنطقة', trip.region || trip.location],
-          ['التاريخ', formatIsoDate(trip.dateIso)],
-          ['الكاتب', trip.authorName || 'رحّالة درب'],
-          ['الارتفاع المكتسب', `+${formatNum(trip.elevationGainM)} m`],
-          ['نقاط المسار', `${formatNum((trip.routePoints || []).length)} نقطة`],
-          ['ملف GPX', trip.gpxFileName || 'متاح للتحميل الفوري'],
+          ['المنطقة', trip.region || trip.location, false],
+          ['التاريخ', formatIsoDate(trip.dateIso), false],
+          ['الناشر', authorDisplayName, true],
+          ['معرّف الناشر', authorShortId, true],
+          ['الارتفاع المكتسب', `+${formatNum(trip.elevationGainM)} m`, false],
+          ['نقاط المسار', `${formatNum((trip.routePoints || []).length)} نقطة`, false],
+          ['ملف GPX', trip.gpxFileName || 'متاح للتحميل الفوري', false],
         ];
-        for (const [k, v] of facts) {
+        for (const [k, v, isAuthorLink] of facts) {
           const row = document.createElement('div');
           row.className = 'fact-row';
           const dt = document.createElement('dt');
-          dt.textContent = k;
+          dt.textContent = String(k);
           const dd = document.createElement('dd');
-          dd.textContent = v;
+          if (isAuthorLink && ownerUid) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'publisher-trigger';
+            btn.textContent = String(v);
+            btn.setAttribute('aria-label', `عرض الملف العام للعضو ${authorDisplayName}`);
+            btn.addEventListener('click', openTripAuthorProfile);
+            dd.appendChild(btn);
+          } else {
+            dd.textContent = String(v);
+          }
           row.append(dt, dd);
           factsList.appendChild(row);
         }
       }
 
-      // Gallery (Cover Image + Lightbox)
       const galleryGrid = document.getElementById('tripGalleryGrid');
       const galleryCount = document.getElementById('galleryCount');
       if (galleryGrid) {
@@ -1727,7 +2769,22 @@ async function bootstrapBrowserApp() {
       updateDetailsPermissionUI();
     }
 
-    // Action Handlers
+    // Favorite, Share, GPX, Coords, Lightbox & Delete handlers
+    document.getElementById('detailFavBtn')?.addEventListener('click', () => {
+      if (currentTrip) toggleFavoriteTrip(currentTrip.id);
+    });
+
+    document.getElementById('shareTripBtn')?.addEventListener('click', async () => {
+      if (!currentTrip) return;
+      const summary = buildShareText(currentTrip, window.location.href);
+      try {
+        await navigator.clipboard.writeText(summary);
+        showToast('تم نسخ بطاقة مشاركة الرحلة (جاهزة لواتساب ومواقع التواصل).');
+      } catch {
+        showToast('تعذّر النسخ التلقائي؛ يمكنك مشاركة رابط الصفحة مباشرة.');
+      }
+    });
+
     document.getElementById('closeLightboxBtn')?.addEventListener('click', () => {
       document.getElementById('photoLightbox')?.close();
     });
@@ -1819,7 +2876,10 @@ async function bootstrapBrowserApp() {
         return;
       }
       try {
-        await updateDoc(doc(db, 'trips', currentTrip.id), { notes: nextNotes });
+        await updateDoc(doc(db, 'trips', currentTrip.id), {
+          notes: nextNotes,
+          updatedAt: serverTimestamp(),
+        });
         if (fieldNotesForm) fieldNotesForm.hidden = true;
         if (fieldNotesDisplay) fieldNotesDisplay.hidden = false;
         showToast('تم حفظ تعديلات المذكرة بنجاح.');
@@ -1828,22 +2888,172 @@ async function bootstrapBrowserApp() {
       }
     });
 
-    // Comments Subcollection
+    // Trail Condition Alerts Subcollection
+    const alertsListEl = document.getElementById('trailAlertsList');
+    const alertsEmptyEl = document.getElementById('trailAlertsEmpty');
+    const latestBadgeEl = document.getElementById('latestTrailStatusBadge');
+    const alertForm = document.getElementById('trailAlertForm');
+    const alertNoteInput = document.getElementById('alertNoteInput');
+    const alertErrorBanner = document.getElementById('alertErrorBanner');
+
+    function renderAlerts() {
+      if (!alertsListEl) return;
+      alertsListEl.replaceChildren();
+      if (alertsEmptyEl) alertsEmptyEl.hidden = latestAlerts.length > 0;
+
+      if (latestBadgeEl) {
+        if (latestAlerts.length > 0) {
+          const latest = latestAlerts[0];
+          latestBadgeEl.textContent = latest.status;
+          latestBadgeEl.className = `trail-status-badge ${getAlertStatusClass(latest.status)}`;
+        } else {
+          latestBadgeEl.textContent = 'لا توجد تقارير بعد';
+          latestBadgeEl.className = 'trail-status-badge status-neutral';
+        }
+      }
+
+      for (const alertItem of latestAlerts) {
+        const li = document.createElement('li');
+        li.className = 'alert-item';
+
+        const head = document.createElement('div');
+        head.className = 'alert-item-head';
+
+        const meta = document.createElement('div');
+        meta.className = 'alert-item-meta';
+
+        const statusBadge = document.createElement('span');
+        statusBadge.className = `trail-status-badge ${getAlertStatusClass(alertItem.status)}`;
+        statusBadge.textContent = alertItem.status;
+
+        const authorSpan = document.createElement('strong');
+        authorSpan.textContent = alertItem.authorName || 'رحّالة درب';
+
+        const idTag = document.createElement('span');
+        idTag.className = 'publisher-id-tag';
+        idTag.textContent = alertItem.authorUserId || generateShortUserId(alertItem.authorUid);
+
+        const dateSpan = document.createElement('span');
+        dateSpan.className = 'comment-date';
+        dateSpan.textContent = formatTimestampDate(alertItem.createdAt) || 'الآن';
+
+        meta.append(statusBadge, authorSpan, idTag, dateSpan);
+        head.appendChild(meta);
+
+        if (canDeleteAlert(alertItem, currentTrip, state.userProfile)) {
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'comment-delete-btn';
+          delBtn.textContent = 'حذف';
+          delBtn.addEventListener('click', async () => {
+            try {
+              await deleteDoc(doc(db, 'trips', tripId, 'alerts', alertItem.id));
+              showToast('تم حذف التنبيه الميداني.');
+            } catch (error) {
+              handleFirestoreError(error, OperationType.DELETE, `trips/${tripId}/alerts/${alertItem.id}`);
+            }
+          });
+          head.appendChild(delBtn);
+        }
+
+        li.appendChild(head);
+        if (alertItem.note && alertItem.note.trim()) {
+          const noteP = document.createElement('p');
+          noteP.className = 'alert-item-note';
+          noteP.textContent = alertItem.note;
+          li.appendChild(noteP);
+        }
+        alertsListEl.appendChild(li);
+      }
+    }
+
+    alertForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (alertErrorBanner) alertErrorBanner.hidden = true;
+      if (!state.userProfile || state.userProfile.isBanned) {
+        showToast('لا تملك صلاحية نشر تنبيه ميداني.');
+        return;
+      }
+      const fd = new FormData(alertForm);
+      const status = String(fd.get('alertStatus') || '').trim();
+      const note = String(fd.get('note') || '').trim();
+
+      const check = validateAlertInput({ status, note });
+      if (!check.valid) {
+        if (alertErrorBanner) {
+          alertErrorBanner.textContent = check.errors[0];
+          alertErrorBanner.hidden = false;
+        }
+        return;
+      }
+
+      const submitBtn = document.getElementById('submitAlertBtn');
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        await addDoc(collection(db, 'trips', tripId, 'alerts'), {
+          tripId,
+          status,
+          note,
+          authorUid: state.userProfile.uid,
+          authorName: state.userProfile.name.slice(0, 80),
+          authorUserId: state.userProfile.userId || generateShortUserId(state.userProfile.uid),
+          createdAt: serverTimestamp(),
+        });
+        if (alertNoteInput) alertNoteInput.value = '';
+        showToast('تم نشر تحديث حالة المسار بنجاح.');
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `trips/${tripId}/alerts`);
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+
+    // Star Rating Picker & Comments Subcollection
+    const starButtons = Array.from(document.querySelectorAll('#starPicker .star-btn'));
+    const ratingInput = document.getElementById('commentRatingInput');
+    const starReadout = document.getElementById('starPickerReadout');
+
+    function setSelectedRating(val) {
+      const safe = Math.min(5, Math.max(1, Number(val) || 5));
+      if (ratingInput) ratingInput.value = String(safe);
+      if (starReadout) starReadout.textContent = `${safe} / 5`;
+      for (const btn of starButtons) {
+        btn.classList.toggle('is-selected', Number(btn.dataset.star) <= safe);
+      }
+    }
+
+    for (const btn of starButtons) {
+      btn.addEventListener('click', () => setSelectedRating(btn.dataset.star));
+    }
+
     const commentsListEl = document.getElementById('commentsList');
     const commentsCountEl = document.getElementById('commentsCount');
     const commentsEmptyEl = document.getElementById('commentsEmptyNote');
+    const reviewsSummaryEl = document.getElementById('reviewsAverageSummary');
+    const heroRatingEl = document.getElementById('detailAvgRatingHero');
     const commentForm = document.getElementById('commentForm');
     const commentTextInput = document.getElementById('commentTextInput');
     const commentErrorBanner = document.getElementById('commentErrorBanner');
-    let latestComments = [];
 
     function renderComments() {
       if (!commentsListEl) return;
       commentsListEl.replaceChildren();
       if (commentsCountEl) {
-        commentsCountEl.textContent = `${formatNum(latestComments.length)} تعليقات`;
+        commentsCountEl.textContent = `${formatNum(latestComments.length)} تقييمات`;
       }
       if (commentsEmptyEl) commentsEmptyEl.hidden = latestComments.length > 0;
+
+      const avg = computeAverageRating(latestComments);
+      if (reviewsSummaryEl) {
+        reviewsSummaryEl.textContent =
+          avg.count > 0
+            ? `متوسط التقييم: ★ ${formatNum(avg.average, 1)} من 5 (${formatNum(avg.count)} تقييمات)`
+            : 'شارك تقييمك بالنجوم وتجربتك حول هذا المسار';
+      }
+      if (heroRatingEl) {
+        heroRatingEl.textContent = avg.count > 0 ? `★ ${formatNum(avg.average, 1)} (${formatNum(avg.count)})` : 'جديد';
+      }
 
       for (const comment of latestComments) {
         const li = document.createElement('li');
@@ -1860,13 +3070,12 @@ async function bootstrapBrowserApp() {
         const info = document.createElement('div');
         const nameEl = document.createElement('p');
         nameEl.className = 'comment-author';
-        nameEl.textContent = comment.authorName || 'رحّالة درب';
+        nameEl.textContent = `${comment.authorName || 'رحّالة درب'} · ${comment.authorUserId || generateShortUserId(comment.authorUid)}`;
         const dateEl = document.createElement('span');
         dateEl.className = 'comment-date';
         dateEl.textContent = formatTimestampDate(comment.createdAt) || 'الآن';
         info.append(nameEl, dateEl);
         authorWrap.append(avatar, info);
-
         head.appendChild(authorWrap);
 
         if (canDeleteComment(comment, currentTrip, state.userProfile)) {
@@ -1877,23 +3086,30 @@ async function bootstrapBrowserApp() {
           delBtn.addEventListener('click', async () => {
             try {
               await deleteDoc(doc(db, 'trips', tripId, 'comments', comment.id));
-              showToast('تم حذف التعليق.');
+              showToast('تم حذف التقييم.');
             } catch (error) {
-              handleFirestoreError(
-                error,
-                OperationType.DELETE,
-                `trips/${tripId}/comments/${comment.id}`
-              );
+              handleFirestoreError(error, OperationType.DELETE, `trips/${tripId}/comments/${comment.id}`);
             }
           });
           head.appendChild(delBtn);
         }
 
+        li.appendChild(head);
+
+        const rNum = Number(comment.rating);
+        if (Number.isFinite(rNum) && rNum >= 1 && rNum <= 5) {
+          const stars = document.createElement('div');
+          stars.className = 'review-stars';
+          stars.setAttribute('aria-label', `تقييم ${rNum} من 5 نجوم`);
+          stars.textContent = `${'★'.repeat(Math.round(rNum))}${'☆'.repeat(5 - Math.round(rNum))}`;
+          li.appendChild(stars);
+        }
+
         const textP = document.createElement('p');
         textP.className = 'comment-text';
         textP.textContent = comment.text;
+        li.appendChild(textP);
 
-        li.append(head, textP);
         commentsListEl.appendChild(li);
       }
     }
@@ -1902,11 +3118,12 @@ async function bootstrapBrowserApp() {
       e.preventDefault();
       if (commentErrorBanner) commentErrorBanner.hidden = true;
       if (!state.userProfile || state.userProfile.isBanned) {
-        showToast('لا تملك صلاحية إضافة تعليق.');
+        showToast('لا تملك صلاحية إضافة تقييم.');
         return;
       }
       const text = String(commentTextInput?.value || '').trim();
-      const validation = validateCommentInput({ text });
+      const rating = Number(ratingInput?.value || 5);
+      const validation = validateCommentInput({ text, rating });
       if (!validation.valid) {
         if (commentErrorBanner) {
           commentErrorBanner.textContent = validation.errors[0];
@@ -1923,11 +3140,14 @@ async function bootstrapBrowserApp() {
           tripId,
           authorUid: state.userProfile.uid,
           authorName: state.userProfile.name.slice(0, 80),
+          authorUserId: state.userProfile.userId || generateShortUserId(state.userProfile.uid),
+          rating,
           text,
           createdAt: serverTimestamp(),
         });
         if (commentTextInput) commentTextInput.value = '';
-        showToast('تم إضافة تعليقك بنجاح.');
+        setSelectedRating(5);
+        showToast('تم إضافة تقييمك وتعليقك بنجاح.');
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, `trips/${tripId}/comments`);
       } finally {
@@ -1938,6 +3158,18 @@ async function bootstrapBrowserApp() {
     onAuthReady(() => {
       updateDetailsPermissionUI();
       renderComments();
+      renderAlerts();
+    });
+
+    // Live Trips Snapshot for author badge computation
+    onSnapshot(collection(db, 'trips'), (allSnap) => {
+      if (!currentTrip) return;
+      const ownerUid = getTripOwnerUid(currentTrip);
+      const ownerTrips = allSnap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((t) => getTripOwnerUid(t) === ownerUid);
+      authorBadges = getEarnedBadges(ownerTrips);
+      renderBadgesInline(document.getElementById('detailAuthorBadges'), authorBadges);
     });
 
     // Live Trip Subscription
@@ -1947,43 +3179,54 @@ async function bootstrapBrowserApp() {
         if (!snap.exists()) {
           showNotFound('هذه الرحلة غير موجودة أو تم حذفها.');
           if (commentsUnsub) commentsUnsub();
+          if (alertsUnsub) alertsUnsub();
           return;
         }
         renderTripDetails({ id: snap.id, ...snap.data() });
+
         if (!commentsUnsub) {
-          const cQuery = query(
-            collection(db, 'trips', tripId, 'comments'),
-            orderBy('createdAt', 'desc')
-          );
           commentsUnsub = onSnapshot(
-            cQuery,
+            query(collection(db, 'trips', tripId, 'comments'), orderBy('createdAt', 'desc')),
             (cSnap) => {
               latestComments = cSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
               renderComments();
             },
-            (error) => {
-              handleFirestoreError(error, OperationType.LIST, `trips/${tripId}/comments`);
-            }
+            (error) => handleFirestoreError(error, OperationType.LIST, `trips/${tripId}/comments`)
+          );
+        }
+
+        if (!alertsUnsub) {
+          alertsUnsub = onSnapshot(
+            query(collection(db, 'trips', tripId, 'alerts'), orderBy('createdAt', 'desc')),
+            (aSnap) => {
+              latestAlerts = aSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+              renderAlerts();
+            },
+            (error) => handleFirestoreError(error, OperationType.LIST, `trips/${tripId}/alerts`)
           );
         }
       },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, `trips/${tripId}`);
-      }
+      (error) => handleFirestoreError(error, OperationType.GET, `trips/${tripId}`)
     );
   }
 
   /* ==========================================================================
-     PAGE 3: Add New Trip (add-trip.html)
+     PAGE 3: Add / Edit Trip (add-trip.html)
      ========================================================================== */
 
   function initAddTripPage() {
+    const params = new URLSearchParams(window.location.search);
+    const editTripId = params.get('edit')?.trim() || '';
+
     const guardBox = document.getElementById('addTripGuardBox');
     const guardTitle = document.getElementById('addTripGuardTitle');
     const guardDesc = document.getElementById('addTripGuardDesc');
     const guardLoginLink = document.getElementById('addTripGuardLoginLink');
     const workspace = document.getElementById('addTripWorkspace');
 
+    const pageTitleEl = document.getElementById('addTripPageTitle');
+    const pageSubtitleEl = document.getElementById('addTripPageSubtitle');
+    const modeBadgeEl = document.getElementById('addTripModeBadge');
     const form = document.getElementById('addTripForm');
     const errorBanner = document.getElementById('formErrorBanner');
     const submitBtn = document.getElementById('submitTripBtn');
@@ -2002,14 +3245,159 @@ async function bootstrapBrowserApp() {
     const gpxTitle = document.getElementById('gpxUploadTitle');
     const gpxHint = document.getElementById('gpxUploadHint');
     const removeGpxBtn = document.getElementById('removeGpxBtn');
+    const coordsHintEl = document.getElementById('addTripMapCoordsHint');
 
+    let editingTrip = null;
+    let editLoaded = false;
     let selectedCoverFile = null;
+    let existingCoverUrl = '';
     let coverPreviewObjectUrl = '';
     let selectedGpxFile = null;
     let parsedGpxData = null;
+    let pickedLat = DEFAULT_KSA_LAT;
+    let pickedLng = DEFAULT_KSA_LNG;
+    let previewMap = null;
+    let previewLayer = null;
 
     if (dateInput && !dateInput.value) {
       dateInput.value = new Date().toISOString().slice(0, 10);
+    }
+
+    function updateCoordsHint(lat, lng) {
+      if (coordsHintEl) {
+        coordsHintEl.textContent = `الإحداثيات المحددة لنقطة البداية: ${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)} (يمكنك النقر على الخريطة لتعديلها)`;
+      }
+    }
+
+    function initOrUpdatePreviewMap(routePoints = null) {
+      if (typeof window.L === 'undefined') return;
+      const mapEl = document.getElementById('addTripPreviewMap');
+      if (!mapEl) return;
+
+      if (!previewMap) {
+        previewMap = window.L.map(mapEl, { scrollWheelZoom: false }).setView([pickedLat, pickedLng], 6);
+        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap',
+          maxZoom: 18,
+        }).addTo(previewMap);
+        previewLayer = window.L.layerGroup().addTo(previewMap);
+
+        previewMap.on('click', (ev) => {
+          if (parsedGpxData) return;
+          pickedLat = Math.round(ev.latlng.lat * 1e6) / 1e6;
+          pickedLng = Math.round(ev.latlng.lng * 1e6) / 1e6;
+          updateCoordsHint(pickedLat, pickedLng);
+          initOrUpdatePreviewMap(null);
+        });
+      }
+
+      previewLayer.clearLayers();
+
+      if (Array.isArray(routePoints) && routePoints.length >= 2) {
+        const coords = routePoints.map((p) => [Number(p.lat), Number(p.lng)]);
+        const poly = window.L.polyline(coords, { color: '#234736', weight: 4 }).addTo(previewLayer);
+        window.L.circleMarker(coords[0], {
+          radius: 7,
+          color: '#ffffff',
+          weight: 2,
+          fillColor: '#22c55e',
+          fillOpacity: 1,
+        })
+          .bindTooltip('نقطة البداية')
+          .addTo(previewLayer);
+        window.L.circleMarker(coords[coords.length - 1], {
+          radius: 7,
+          color: '#ffffff',
+          weight: 2,
+          fillColor: '#ea580c',
+          fillOpacity: 1,
+        })
+          .bindTooltip('نقطة الوصول')
+          .addTo(previewLayer);
+
+        window.setTimeout(() => {
+          previewMap.invalidateSize();
+          previewMap.fitBounds(poly.getBounds(), { padding: [26, 26] });
+        }, 70);
+      } else {
+        window.L.circleMarker([pickedLat, pickedLng], {
+          radius: 8,
+          color: '#ffffff',
+          weight: 2.5,
+          fillColor: '#234736',
+          fillOpacity: 1,
+        })
+          .bindTooltip('نقطة البداية المحددة')
+          .addTo(previewLayer);
+        window.setTimeout(() => {
+          previewMap.invalidateSize();
+        }, 70);
+      }
+    }
+
+    async function loadTripForEdit(userProfile) {
+      if (!editTripId || editLoaded) return;
+      editLoaded = true;
+      try {
+        const snap = await getDoc(doc(db, 'trips', editTripId));
+        if (!snap.exists()) {
+          if (workspace) workspace.hidden = true;
+          if (guardBox) guardBox.hidden = false;
+          if (guardTitle) guardTitle.textContent = 'الرحلة غير موجودة';
+          if (guardDesc) guardDesc.textContent = 'تعذّر العثور على الرحلة المطلوب تعديلها.';
+          return;
+        }
+        const trip = { id: snap.id, ...snap.data() };
+        if (!canEditTrip(trip, userProfile)) {
+          if (workspace) workspace.hidden = true;
+          if (guardBox) guardBox.hidden = false;
+          if (guardTitle) guardTitle.textContent = 'لا تملك صلاحية تعديل هذه الرحلة';
+          if (guardDesc) guardDesc.textContent = 'يمكن فقط لصاحب الرحلة أو المشرف العام تعديل بياناتها.';
+          return;
+        }
+
+        editingTrip = trip;
+        document.title = `تعديل: ${trip.title} — درب`;
+        if (pageTitleEl) pageTitleEl.textContent = 'تعديل بيانات الرحلة';
+        if (pageSubtitleEl) pageSubtitleEl.textContent = `تقوم الآن بتحديث تفاصيل «${trip.title}».`;
+        if (modeBadgeEl) modeBadgeEl.textContent = 'وضع التعديل';
+        if (submitBtn) submitBtn.textContent = 'حفظ التعديلات';
+
+        const setVal = (id, val) => {
+          const el = document.getElementById(id);
+          if (el) el.value = val ?? '';
+        };
+        setVal('tripTitleInput', trip.title);
+        setVal('tripLocationInput', trip.location);
+        setVal('tripDateInput', trip.dateIso);
+        setVal('tripDistanceInput', trip.distanceKm);
+        setVal('tripDurationInput', trip.durationHours);
+        setVal('tripElevationInput', trip.elevationGainM);
+        setVal('tripNotesInput', trip.notes);
+
+        const diffRadio = form?.querySelector(`input[name="difficulty"][value="${trip.difficulty}"]`);
+        if (diffRadio) diffRadio.checked = true;
+
+        existingCoverUrl = trip.coverImageUrl || '';
+        if (existingCoverUrl && coverPreviewImg && coverPreviewBox && coverPlaceholder) {
+          coverPreviewImg.src = sanitizeMediaUrl(existingCoverUrl, DEFAULT_HERO_IMAGE);
+          if (coverFileNameEl) coverFileNameEl.textContent = 'صورة الغلاف الحالية';
+          coverPlaceholder.hidden = true;
+          coverPreviewBox.hidden = false;
+        }
+
+        if (Number.isFinite(Number(trip.startLat)) && Number.isFinite(Number(trip.startLng))) {
+          pickedLat = Number(trip.startLat);
+          pickedLng = Number(trip.startLng);
+          updateCoordsHint(pickedLat, pickedLng);
+        }
+
+        if (Array.isArray(trip.routePoints) && trip.routePoints.length >= 2) {
+          initOrUpdatePreviewMap(trip.routePoints);
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, `trips/${editTripId}`);
+      }
     }
 
     onAuthReady(({ firebaseUser, userProfile }) => {
@@ -2018,13 +3406,14 @@ async function bootstrapBrowserApp() {
         if (guardBox) guardBox.hidden = false;
         if (guardTitle) guardTitle.textContent = 'تسجيل الدخول مطلوب لتوثيق رحلة جديدة';
         if (guardDesc) guardDesc.textContent = 'سيتم توجيهك الآن إلى صفحة تسجيل الدخول...';
+        const target = `./auth.html?next=${encodeURIComponent(`./add-trip.html${window.location.search}`)}`;
         if (guardLoginLink) {
           guardLoginLink.hidden = false;
-          guardLoginLink.href = './auth.html?next=./add-trip.html';
+          guardLoginLink.href = target;
         }
         window.setTimeout(() => {
           if (!state.firebaseUser) {
-            window.location.replace('./auth.html?next=./add-trip.html');
+            window.location.replace(target);
           }
         }, 900);
         return;
@@ -2034,15 +3423,15 @@ async function bootstrapBrowserApp() {
         if (workspace) workspace.hidden = true;
         if (guardBox) guardBox.hidden = false;
         if (guardTitle) guardTitle.textContent = 'تم تعليق هذا الحساب';
-        if (guardDesc) {
-          guardDesc.textContent = 'تم حظر حسابك من قِبل الإدارة ولا يمكنك إضافة رحلات جديدة.';
-        }
+        if (guardDesc) guardDesc.textContent = 'تم حظر حسابك من قِبل الإدارة ولا يمكنك إضافة أو تعديل الرحلات.';
         if (guardLoginLink) guardLoginLink.hidden = true;
         return;
       }
 
       if (guardBox) guardBox.hidden = true;
       if (workspace) workspace.hidden = false;
+      initOrUpdatePreviewMap(parsedGpxData?.routePoints || editingTrip?.routePoints || null);
+      if (editTripId) loadTripForEdit(userProfile);
     });
 
     function showFormError(msg) {
@@ -2098,6 +3487,7 @@ async function bootstrapBrowserApp() {
 
     removeCoverBtn?.addEventListener('click', () => {
       selectedCoverFile = null;
+      existingCoverUrl = '';
       if (coverPreviewObjectUrl) URL.revokeObjectURL(coverPreviewObjectUrl);
       coverPreviewObjectUrl = '';
       if (coverInput) coverInput.value = '';
@@ -2125,6 +3515,11 @@ async function bootstrapBrowserApp() {
         }
         selectedGpxFile = file;
         parsedGpxData = parsed;
+        pickedLat = parsed.startLat;
+        pickedLng = parsed.startLng;
+        updateCoordsHint(pickedLat, pickedLng);
+        initOrUpdatePreviewMap(parsed.routePoints);
+
         gpxUploadBar?.classList.add('has-file');
         if (gpxTitle) gpxTitle.textContent = file.name;
         if (gpxHint) {
@@ -2136,7 +3531,7 @@ async function bootstrapBrowserApp() {
         const elevField = document.getElementById('tripElevationInput');
         if (distField && !distField.value) distField.value = String(parsed.distanceKm);
         if (elevField && !elevField.value) elevField.value = String(parsed.elevationGainM);
-        showToast('تم تحليل ملف GPX وتعبئة بيانات المسار.');
+        showToast('تم تحليل ملف GPX ورسم المسار على الخريطة.');
       } catch {
         showFormError('تعذّرت قراءة ملف GPX. تأكد من سلامة الملف.');
       }
@@ -2148,8 +3543,9 @@ async function bootstrapBrowserApp() {
       if (gpxInput) gpxInput.value = '';
       gpxUploadBar?.classList.remove('has-file');
       if (gpxTitle) gpxTitle.textContent = 'أضف مسار الرحلة GPX';
-      if (gpxHint) gpxHint.textContent = 'اختياري · ارفع ملف .gpx لعرض المسار وملف الارتفاعات تلقائياً';
+      if (gpxHint) gpxHint.textContent = 'ارفع ملف .gpx لرسم المسار تلقائياً، أو انقر على الخريطة لتحديد نقطة البداية';
       if (removeGpxBtn) removeGpxBtn.hidden = true;
+      initOrUpdatePreviewMap(editingTrip?.routePoints || null);
     });
 
     form?.addEventListener('submit', async (e) => {
@@ -2157,7 +3553,7 @@ async function bootstrapBrowserApp() {
       clearFormError();
 
       if (!state.userProfile || state.userProfile.isBanned) {
-        showFormError('لا تملك صلاحية إضافة رحلة بحسابك الحالي.');
+        showFormError('لا تملك صلاحية حفظ الرحلة بحسابك الحالي.');
         return;
       }
 
@@ -2191,11 +3587,11 @@ async function bootstrapBrowserApp() {
 
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'جاري حفظ الرحلة...';
+        submitBtn.textContent = editingTrip ? 'جاري حفظ التعديلات...' : 'جاري حفظ الرحلة...';
       }
 
       try {
-        let coverImageUrl = DEFAULT_HERO_IMAGE;
+        let coverImageUrl = existingCoverUrl || DEFAULT_HERO_IMAGE;
         if (selectedCoverFile) {
           const safeFileName = selectedCoverFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
           try {
@@ -2204,13 +3600,14 @@ async function bootstrapBrowserApp() {
               selectedCoverFile
             );
           } catch {
-            // Fallback to compressed data URL when Firebase Storage bucket is not yet active
             coverImageUrl = await compressImageToDataUrl(selectedCoverFile);
           }
         }
 
-        let gpxUrl = '';
+        let gpxUrl = editingTrip?.gpxUrl || '';
+        let gpxFileName = editingTrip?.gpxFileName || '';
         if (selectedGpxFile) {
+          gpxFileName = selectedGpxFile.name.slice(0, 160);
           const safeGpxName = selectedGpxFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
           try {
             gpxUrl = await uploadFileToStorage(
@@ -2222,11 +3619,26 @@ async function bootstrapBrowserApp() {
           }
         }
 
-        const trail = parsedGpxData || buildDefaultTrailData(distanceKm, elevationGainM);
+        const trail =
+          parsedGpxData ||
+          (editingTrip &&
+          Number(editingTrip.startLat) === pickedLat &&
+          Number(editingTrip.startLng) === pickedLng
+            ? {
+                startLat: editingTrip.startLat,
+                startLng: editingTrip.startLng,
+                minElevationM: editingTrip.minElevationM,
+                maxElevationM: editingTrip.maxElevationM,
+                routePoints: editingTrip.routePoints,
+                elevationProfile: editingTrip.elevationProfile,
+              }
+            : buildDefaultTrailData(distanceKm, elevationGainM, pickedLat, pickedLng));
+
         const region = location.split(/[،,]/)[0].trim().slice(0, 60) || location.slice(0, 60);
         const year = Number(dateIso.slice(0, 4));
+        const userShortId = state.userProfile.userId || generateShortUserId(state.userProfile.uid);
 
-        const payload = {
+        const basePayload = {
           title,
           location,
           region,
@@ -2244,34 +3656,621 @@ async function bootstrapBrowserApp() {
           startLng: Number(trail.startLng),
           routePoints: trail.routePoints,
           elevationProfile: trail.elevationProfile,
-          authorUid: state.userProfile.uid,
-          authorName: state.userProfile.name.slice(0, 80),
-          createdAt: serverTimestamp(),
         };
 
-        if (gpxUrl && gpxUrl.length <= 2000) {
-          payload.gpxUrl = gpxUrl;
-        }
-        if (selectedGpxFile?.name) {
-          payload.gpxFileName = selectedGpxFile.name.slice(0, 160);
-        }
+        if (gpxUrl && gpxUrl.length <= 2000) basePayload.gpxUrl = gpxUrl;
+        if (gpxFileName) basePayload.gpxFileName = gpxFileName;
 
-        const createdRef = await addDoc(collection(db, 'trips'), payload);
-        showToast('تم حفظ ونشر رحلتك بنجاح!');
-        window.location.href = `./trip-details.html?id=${encodeURIComponent(createdRef.id)}`;
+        if (editingTrip) {
+          await updateDoc(doc(db, 'trips', editingTrip.id), {
+            ...basePayload,
+            updatedAt: serverTimestamp(),
+          });
+          showToast('تم حفظ تعديلات الرحلة بنجاح!');
+          window.location.href = `./trip-details.html?id=${encodeURIComponent(editingTrip.id)}`;
+        } else {
+          const createdRef = await addDoc(collection(db, 'trips'), {
+            ...basePayload,
+            authorUid: state.userProfile.uid,
+            authorId: state.userProfile.uid,
+            authorName: state.userProfile.name.slice(0, 80),
+            authorUserId: userShortId,
+            createdAt: serverTimestamp(),
+          });
+          showToast('تم حفظ ونشر رحلتك بنجاح!');
+          window.location.href = `./trip-details.html?id=${encodeURIComponent(createdRef.id)}`;
+        }
       } catch (error) {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = 'حفظ الرحلة ونشرها';
+          submitBtn.textContent = editingTrip ? 'حفظ التعديلات' : 'حفظ الرحلة ونشرها';
         }
         showFormError('حدث خطأ أثناء حفظ الرحلة. تأكد من صلاحية حسابك وحاول مجدداً.');
-        handleFirestoreError(error, OperationType.CREATE, 'trips');
+        handleFirestoreError(
+          error,
+          editingTrip ? OperationType.UPDATE : OperationType.CREATE,
+          editingTrip ? `trips/${editingTrip.id}` : 'trips'
+        );
       }
     });
   }
 
   /* ==========================================================================
-     PAGE 4: Authentication (auth.html)
+     PAGE 4: User Profile & Account Settings (profile.html)
+     ========================================================================== */
+
+  function initProfilePage() {
+    const guardBox = document.getElementById('profileGuardBox');
+    const guardTitle = document.getElementById('profileGuardTitle');
+    const guardDesc = document.getElementById('profileGuardDesc');
+    const guardLoginLink = document.getElementById('profileGuardLoginLink');
+    const workspace = document.getElementById('profileWorkspace');
+
+    const shortIdEl = document.getElementById('profileShortIdDisplay');
+    const copyIdBtn = document.getElementById('copyUserIdBtn');
+    const focusIdBtn = document.getElementById('focusUserIdBtn');
+    const avatarLg = document.getElementById('profileAvatarLg');
+    const displayNameTitle = document.getElementById('profileDisplayNameTitle');
+    const roleBadge = document.getElementById('profileRoleBadge');
+    const emailLine = document.getElementById('profileEmailLine');
+    const badgesInline = document.getElementById('profileEarnedBadgesInline');
+    const badgesGrid = document.getElementById('profileBadgesGrid');
+
+    const tripsCountEl = document.getElementById('profileTripsCount');
+    const totalKmEl = document.getElementById('profileTotalKm');
+    const maxGainEl = document.getElementById('profileMaxGain');
+    const favCountEl = document.getElementById('profileFavCount');
+
+    const infoForm = document.getElementById('profileInfoForm');
+    const infoError = document.getElementById('profileInfoError');
+    const nameInput = document.getElementById('profileNameInput');
+    const userIdInput = document.getElementById('profileUserIdInput');
+    const dobInput = document.getElementById('profileDobInput');
+
+    const securityNotice = document.getElementById('profileSecurityNotice');
+    const securityError = document.getElementById('profileSecurityError');
+    const emailForm = document.getElementById('updateEmailForm');
+    const passwordForm = document.getElementById('updatePasswordForm');
+
+    let userTripsSub = null;
+    let allTripsSnapshot = [];
+    let myTrips = [];
+
+    function renderProfileBadges() {
+      const allBadges = computeUserBadges(myTrips);
+      const earned = allBadges.filter((b) => b.earned);
+      renderBadgesInline(badgesInline, earned);
+
+      if (!badgesGrid) return;
+      badgesGrid.replaceChildren();
+      for (const badge of allBadges) {
+        const card = document.createElement('article');
+        card.className = `badge-card${badge.earned ? '' : ' is-locked'}`;
+        const iconBox = document.createElement('span');
+        iconBox.className = 'badge-icon-circle';
+        iconBox.textContent = badge.icon;
+        const body = document.createElement('div');
+        const h3 = document.createElement('h3');
+        h3.className = 'badge-card-title';
+        h3.textContent = badge.title;
+        const p = document.createElement('p');
+        p.className = 'badge-card-desc';
+        p.textContent = badge.description;
+        const st = document.createElement('span');
+        st.className = 'badge-card-status';
+        st.textContent = badge.progressLabel;
+        body.append(h3, p, st);
+        card.append(iconBox, body);
+        badgesGrid.appendChild(card);
+      }
+
+      const stats = computeSummaryStats(myTrips);
+      const maxGain = myTrips.reduce((m, t) => Math.max(m, Number(t.elevationGainM) || 0), 0);
+      if (tripsCountEl) tripsCountEl.textContent = formatNum(stats.totalTrips);
+      if (totalKmEl) totalKmEl.textContent = `${formatNum(stats.totalKm, 1)} km`;
+      if (maxGainEl) maxGainEl.textContent = `${formatNum(maxGain)} m`;
+    }
+
+    function populateProfileUI(fbUser, profile) {
+      const shortId = profile.userId || generateShortUserId(profile.uid);
+      if (shortIdEl) shortIdEl.textContent = shortId;
+      if (avatarLg) avatarLg.textContent = (profile.name || 'ر').trim().charAt(0);
+      if (displayNameTitle) displayNameTitle.textContent = profile.name;
+      if (emailLine) emailLine.textContent = profile.email;
+      if (roleBadge) {
+        roleBadge.textContent = profile.role === 'superadmin' ? 'مشرف عام' : 'رحّالة درب';
+        roleBadge.className = profile.role === 'superadmin' ? 'role-tag role-tag-admin' : 'role-tag';
+      }
+      if (favCountEl) favCountEl.textContent = formatNum((profile.favorites || []).length);
+      if (nameInput && document.activeElement !== nameInput) nameInput.value = profile.name || '';
+      if (userIdInput && document.activeElement !== userIdInput) userIdInput.value = shortId;
+      if (dobInput && document.activeElement !== dobInput) dobInput.value = profile.dateOfBirth || '';
+
+      const usesPasswordProvider = fbUser.providerData?.some((p) => p.providerId === 'password');
+      if (securityNotice) {
+        if (!usesPasswordProvider) {
+          securityNotice.textContent =
+            'أنت مسجّل الدخول عبر حساب Google. يمكنك تحديث البريد وكلمة المرور مباشرة من إعدادات حساب Google أو بعد ربط كلمة مرور.';
+          securityNotice.hidden = false;
+        } else {
+          securityNotice.hidden = true;
+        }
+      }
+    }
+
+    copyIdBtn?.addEventListener('click', async () => {
+      const code = shortIdEl?.textContent || '';
+      if (!code) return;
+      try {
+        await navigator.clipboard.writeText(code);
+        showToast(`تم نسخ المعرّف الفريد: ${code}`);
+      } catch {
+        showToast(`المعرّف الفريد: ${code}`);
+      }
+    });
+
+    focusIdBtn?.addEventListener('click', () => {
+      userIdInput?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      userIdInput?.focus();
+      userIdInput?.select();
+    });
+
+    infoForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (infoError) infoError.hidden = true;
+      if (!state.firebaseUser || !state.userProfile) return;
+
+      const uid = state.userProfile.uid;
+      const oldUserId = state.userProfile.userId || generateShortUserId(uid);
+      const name = String(nameInput?.value || '').trim();
+      const rawNextUserId = String(userIdInput?.value || oldUserId).trim();
+      const dateOfBirth = String(dobInput?.value || '').trim();
+
+      const check = validateProfileUpdateInput({ name, userId: rawNextUserId, dateOfBirth });
+      if (!check.valid) {
+        if (infoError) {
+          infoError.textContent = check.errors[0];
+          infoError.hidden = false;
+        }
+        return;
+      }
+
+      const idResult = validateCustomUserId(rawNextUserId);
+      const nextUserId = idResult.value;
+      const nextLower = idResult.normalized;
+      const oldHandleKey = toHandleDocId(oldUserId);
+      const newHandleKey = toHandleDocId(nextUserId);
+
+      const btn = document.getElementById('saveProfileInfoBtn');
+      if (btn) btn.disabled = true;
+
+      try {
+        // Case-insensitive uniqueness verification against /usernames and existing trips
+        const claimRef = doc(db, 'usernames', newHandleKey);
+        const claimSnap = await getDoc(claimRef);
+        const claimDoc = claimSnap.exists() ? claimSnap.data() : null;
+
+        let tripsForCheck = allTripsSnapshot;
+        if (tripsForCheck.length === 0) {
+          const allSnap = await getDocs(collection(db, 'trips'));
+          tripsForCheck = allSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        }
+
+        if (
+          isUserIdTakenByAnother({
+            candidateUserId: nextUserId,
+            currentUid: uid,
+            claimDoc,
+            allTrips: tripsForCheck,
+          })
+        ) {
+          if (infoError) {
+            infoError.textContent = 'هذا الـ ID مستخدم بالفعل، يرجى اختيار معرّف آخر';
+            infoError.hidden = false;
+          }
+          return;
+        }
+
+        // 1. Reserve new handle in /usernames/{newHandleKey} (and release old handle if changed)
+        await setDoc(claimRef, {
+          uid,
+          userId: nextUserId,
+          normalizedId: nextLower,
+          updatedAt: serverTimestamp(),
+        });
+
+        if (oldHandleKey && oldHandleKey !== newHandleKey) {
+          try {
+            const oldRef = doc(db, 'usernames', oldHandleKey);
+            const oldSnap = await getDoc(oldRef);
+            if (oldSnap.exists() && oldSnap.data()?.uid === uid) {
+              await deleteDoc(oldRef);
+            }
+          } catch {
+            // Non-fatal cleanup of previous handle
+          }
+        }
+
+        // 2. Update Firebase Auth, private user profile, and zero-PII public profile
+        await updateProfile(state.firebaseUser, { displayName: name });
+        await updateDoc(doc(db, 'users', uid), {
+          name,
+          userId: nextUserId,
+          userIdLower: nextLower,
+          dateOfBirth,
+        });
+        await setDoc(doc(db, 'publicProfiles', uid), {
+          uid,
+          name,
+          userId: nextUserId,
+          updatedAt: serverTimestamp(),
+        });
+
+        // 3. Sync new Display Name & User ID across all published trips by this user
+        const authoredTripsSnap = await getDocs(
+          query(collection(db, 'trips'), where('authorUid', '==', uid))
+        );
+        if (!authoredTripsSnap.empty) {
+          const docs = authoredTripsSnap.docs;
+          for (let i = 0; i < docs.length; i += 400) {
+            const chunk = docs.slice(i, i + 400);
+            const batch = writeBatch(db);
+            for (const tripDoc of chunk) {
+              batch.update(tripDoc.ref, {
+                authorName: name,
+                authorUserId: nextUserId,
+                updatedAt: serverTimestamp(),
+              });
+            }
+            await batch.commit();
+          }
+        }
+
+        state.userProfile = {
+          ...state.userProfile,
+          name,
+          userId: nextUserId,
+          userIdLower: nextLower,
+          dateOfBirth,
+        };
+        notifyAuthListeners();
+        showToast('تم حفظ بيانات الملف الشخصي ومزامنة المعرّف مع جميع رحلاتك بنجاح.');
+      } catch (error) {
+        if (error?.code === 'permission-denied') {
+          if (infoError) {
+            infoError.textContent = 'هذا الـ ID مستخدم بالفعل، يرجى اختيار معرّف آخر';
+            infoError.hidden = false;
+          }
+        } else {
+          if (infoError) {
+            infoError.textContent = 'تعذّر حفظ التغييرات. يرجى المحاولة مجدداً.';
+            infoError.hidden = false;
+          }
+          handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`);
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+
+    async function reauthenticateIfProvided(password) {
+      if (!password || !state.firebaseUser?.email) return;
+      const cred = EmailAuthProvider.credential(state.firebaseUser.email, password);
+      await reauthenticateWithCredential(state.firebaseUser, cred);
+    }
+
+    emailForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (securityError) securityError.hidden = true;
+      if (!state.firebaseUser || !state.userProfile) return;
+
+      const newEmail = String(document.getElementById('newEmailInput')?.value || '').trim();
+      const currentPwd = String(document.getElementById('emailCurrentPasswordInput')?.value || '');
+
+      if (!newEmail || !newEmail.includes('@')) {
+        if (securityError) {
+          securityError.textContent = 'يرجى إدخال بريد إلكتروني جديد صحيح.';
+          securityError.hidden = false;
+        }
+        return;
+      }
+
+      const btn = document.getElementById('updateEmailBtn');
+      if (btn) btn.disabled = true;
+
+      try {
+        await reauthenticateIfProvided(currentPwd);
+        await updateEmail(state.firebaseUser, newEmail);
+        await updateDoc(doc(db, 'users', state.userProfile.uid), { email: newEmail });
+        state.userProfile = { ...state.userProfile, email: newEmail };
+        notifyAuthListeners();
+        emailForm.reset();
+        showToast('تم تحديث البريد الإلكتروني بنجاح.');
+      } catch (error) {
+        if (securityError) {
+          securityError.textContent = translateAuthError(error?.code);
+          securityError.hidden = false;
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+
+    passwordForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (securityError) securityError.hidden = true;
+      if (!state.firebaseUser) return;
+
+      const currentPwd = String(document.getElementById('passwordCurrentInput')?.value || '');
+      const newPwd = String(document.getElementById('newPasswordInput')?.value || '');
+
+      if (newPwd.length < 6) {
+        if (securityError) {
+          securityError.textContent = 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.';
+          securityError.hidden = false;
+        }
+        return;
+      }
+
+      const btn = document.getElementById('updatePasswordBtn');
+      if (btn) btn.disabled = true;
+
+      try {
+        await reauthenticateIfProvided(currentPwd);
+        await updatePassword(state.firebaseUser, newPwd);
+        passwordForm.reset();
+        showToast('تم تحديث كلمة المرور بنجاح.');
+      } catch (error) {
+        if (securityError) {
+          securityError.textContent = translateAuthError(error?.code);
+          securityError.hidden = false;
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+
+    onAuthReady(({ firebaseUser, userProfile }) => {
+      if (!firebaseUser || !userProfile) {
+        if (workspace) workspace.hidden = true;
+        if (guardBox) guardBox.hidden = false;
+        if (guardTitle) guardTitle.textContent = 'يرجى تسجيل الدخول لإدارة حسابك';
+        if (guardDesc) guardDesc.textContent = 'سجّل دخولك للوصول إلى المعرّف الفريد وإعدادات الملف الشخصي وشارات الإنجاز.';
+        if (guardLoginLink) guardLoginLink.hidden = false;
+        return;
+      }
+
+      if (guardBox) guardBox.hidden = true;
+      if (workspace) workspace.hidden = false;
+      populateProfileUI(firebaseUser, userProfile);
+
+      if (!userTripsSub) {
+        userTripsSub = onSnapshot(
+          collection(db, 'trips'),
+          (snap) => {
+            allTripsSnapshot = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            myTrips = allTripsSnapshot.filter((t) => getTripOwnerUid(t) === userProfile.uid);
+            renderProfileBadges();
+          },
+          (error) => handleFirestoreError(error, OperationType.LIST, 'trips')
+        );
+      } else {
+        renderProfileBadges();
+      }
+    });
+  }
+
+  /* ==========================================================================
+     PAGE 5: Leaderboard (leaderboard.html)
+     ========================================================================== */
+
+  function initLeaderboardPage() {
+    let allTrips = [];
+    let activeSort = 'trips';
+    let selectedRegion = 'all';
+
+    const sortButtons = Array.from(document.querySelectorAll('[data-lb-sort]'));
+    const regionWrap = document.getElementById('lbRegionWrap');
+    const regionSelect = document.getElementById('lbRegionSelect');
+    const podiumEl = document.getElementById('leaderboardPodium');
+    const loadingEl = document.getElementById('leaderboardLoading');
+    const tableWrap = document.getElementById('leaderboardTableWrap');
+    const tableBody = document.getElementById('leaderboardTableBody');
+    const emptyEl = document.getElementById('leaderboardEmpty');
+    const summarySub = document.getElementById('lbSummarySubtitle');
+
+    function populateRegionDropdown() {
+      if (!regionSelect) return;
+      const regions = Array.from(
+        new Set(allTrips.map((t) => String(t.region || '').trim()).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b, 'ar'));
+
+      const prevVal = regionSelect.value || 'all';
+      regionSelect.replaceChildren();
+      const allOpt = document.createElement('option');
+      allOpt.value = 'all';
+      allOpt.textContent = 'جميع المناطق';
+      regionSelect.appendChild(allOpt);
+
+      for (const reg of regions) {
+        const opt = document.createElement('option');
+        opt.value = reg;
+        opt.textContent = reg;
+        regionSelect.appendChild(opt);
+      }
+      regionSelect.value = regions.includes(prevVal) ? prevVal : 'all';
+      selectedRegion = regionSelect.value;
+    }
+
+    function renderLeaderboard() {
+      const entries = buildLeaderboard(allTrips, {
+        sortBy: activeSort === 'region' ? 'trips' : activeSort,
+        region: activeSort === 'region' ? selectedRegion : 'all',
+      });
+
+      if (loadingEl) loadingEl.hidden = true;
+
+      if (entries.length === 0) {
+        if (podiumEl) podiumEl.hidden = true;
+        if (tableWrap) tableWrap.hidden = true;
+        if (emptyEl) emptyEl.hidden = false;
+        if (summarySub) summarySub.textContent = 'لا توجد مساهمات منشورة بعد في هذا التصنيف.';
+        return;
+      }
+
+      if (emptyEl) emptyEl.hidden = true;
+      if (tableWrap) tableWrap.hidden = false;
+      if (summarySub) {
+        summarySub.textContent = `إجمالي المساهمين النشطين: ${formatNum(entries.length)} رحّالة`;
+      }
+
+      // Top 3 Podium
+      if (podiumEl) {
+        podiumEl.replaceChildren();
+        podiumEl.hidden = false;
+        const top3 = entries.slice(0, 3);
+        top3.forEach((entry, index) => {
+          const rank = index + 1;
+          const card = document.createElement('article');
+          card.className = `podium-card podium-card--${rank}`;
+
+          const openMember = () => {
+            openPublicMemberProfile({
+              uid: entry.uid,
+              name: entry.name,
+              userId: entry.userId,
+              preloadedTrips: allTrips,
+            });
+          };
+
+          const head = document.createElement('div');
+          head.className = 'podium-head';
+          const rBadge = document.createElement('span');
+          rBadge.className = `rank-badge rank-badge--${rank}`;
+          rBadge.textContent = `#${rank}`;
+          const idBtn = document.createElement('button');
+          idBtn.type = 'button';
+          idBtn.className = 'publisher-trigger';
+          idBtn.setAttribute('aria-label', `عرض الملف العام للعضو ${entry.name}`);
+          const idTag = document.createElement('span');
+          idTag.className = 'publisher-id-tag';
+          idTag.textContent = entry.userId;
+          idBtn.appendChild(idTag);
+          idBtn.addEventListener('click', openMember);
+          head.append(rBadge, idBtn);
+
+          const nameH3 = document.createElement('h3');
+          nameH3.className = 'card-section-title';
+          const nameBtn = document.createElement('button');
+          nameBtn.type = 'button';
+          nameBtn.className = 'publisher-trigger publisher-trigger--podium';
+          nameBtn.textContent = entry.name;
+          nameBtn.setAttribute('aria-label', `عرض الملف العام للعضو ${entry.name}`);
+          nameBtn.addEventListener('click', openMember);
+          nameH3.appendChild(nameBtn);
+
+          const statsDiv = document.createElement('div');
+          statsDiv.className = 'podium-stats';
+          statsDiv.textContent = `${formatNum(entry.tripCount)} رحلات · ${formatNum(entry.totalKm, 1)} km`;
+
+          const badgesRow = document.createElement('div');
+          badgesRow.className = 'badges-inline-row';
+          renderBadgesInline(badgesRow, entry.badges);
+
+          card.append(head, nameH3, statsDiv, badgesRow);
+          podiumEl.appendChild(card);
+        });
+      }
+
+      // Full Table
+      if (tableBody) {
+        tableBody.replaceChildren();
+        entries.forEach((entry, index) => {
+          const rank = index + 1;
+          const tr = document.createElement('tr');
+
+          const tdRank = document.createElement('td');
+          const rBadge = document.createElement('span');
+          rBadge.className = `rank-badge${rank <= 3 ? ` rank-badge--${rank}` : ''}`;
+          rBadge.textContent = String(rank);
+          tdRank.appendChild(rBadge);
+
+          const tdUser = document.createElement('td');
+          const userTrigger = document.createElement('button');
+          userTrigger.type = 'button';
+          userTrigger.className = 'publisher-trigger publisher-trigger--table';
+          userTrigger.setAttribute('aria-label', `عرض الملف العام للعضو ${entry.name}`);
+          const uName = document.createElement('strong');
+          uName.textContent = entry.name;
+          const uId = document.createElement('span');
+          uId.className = 'publisher-id-tag';
+          uId.textContent = entry.userId;
+          userTrigger.append(uName, uId);
+          userTrigger.addEventListener('click', () => {
+            openPublicMemberProfile({
+              uid: entry.uid,
+              name: entry.name,
+              userId: entry.userId,
+              preloadedTrips: allTrips,
+            });
+          });
+          tdUser.appendChild(userTrigger);
+
+          const tdBadges = document.createElement('td');
+          const bRow = document.createElement('div');
+          bRow.className = 'badges-inline-row';
+          renderBadgesInline(bRow, entry.badges);
+          tdBadges.appendChild(bRow);
+
+          const tdTrips = document.createElement('td');
+          tdTrips.textContent = `${formatNum(entry.tripCount)} رحلة`;
+
+          const tdKm = document.createElement('td');
+          tdKm.textContent = `${formatNum(entry.totalKm, 1)} km`;
+
+          const tdElev = document.createElement('td');
+          tdElev.textContent = `+${formatNum(entry.maxElevationGainM)} m`;
+
+          tr.append(tdRank, tdUser, tdBadges, tdTrips, tdKm, tdElev);
+          tableBody.appendChild(tr);
+        });
+      }
+    }
+
+    for (const btn of sortButtons) {
+      btn.addEventListener('click', () => {
+        activeSort = btn.dataset.lbSort || 'trips';
+        for (const b of sortButtons) {
+          const active = b === btn;
+          b.classList.toggle('is-active', active);
+          b.setAttribute('aria-selected', String(active));
+        }
+        if (regionWrap) regionWrap.hidden = activeSort !== 'region';
+        renderLeaderboard();
+      });
+    }
+
+    regionSelect?.addEventListener('change', (e) => {
+      selectedRegion = e.target.value || 'all';
+      renderLeaderboard();
+    });
+
+    onSnapshot(
+      collection(db, 'trips'),
+      (snap) => {
+        allTrips = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        populateRegionDropdown();
+        renderLeaderboard();
+      },
+      (error) => {
+        if (loadingEl) loadingEl.hidden = true;
+        handleFirestoreError(error, OperationType.LIST, 'trips');
+      }
+    );
+  }
+
+  /* ==========================================================================
+     PAGE 6: Authentication (auth.html)
      ========================================================================== */
 
   function initAuthPage() {
@@ -2423,7 +4422,7 @@ async function bootstrapBrowserApp() {
   }
 
   /* ==========================================================================
-     PAGE 5: Super Admin Dashboard (admin.html)
+     PAGE 7: Super Admin Dashboard (admin.html)
      ========================================================================== */
 
   function initAdminPage() {
@@ -2457,7 +4456,13 @@ async function bootstrapBrowserApp() {
         const tr = document.createElement('tr');
 
         const tdName = document.createElement('td');
-        tdName.textContent = u.name || '—';
+        const nameStrong = document.createElement('strong');
+        nameStrong.textContent = u.name || '—';
+        const br = document.createElement('br');
+        const idTag = document.createElement('span');
+        idTag.className = 'publisher-id-tag';
+        idTag.textContent = u.userId || generateShortUserId(u.uid);
+        tdName.append(nameStrong, br, idTag);
 
         const tdEmail = document.createElement('td');
         tdEmail.textContent = u.email || '—';
@@ -2529,7 +4534,7 @@ async function bootstrapBrowserApp() {
         tdTitle.appendChild(link);
 
         const tdAuthor = document.createElement('td');
-        tdAuthor.textContent = trip.authorName || '—';
+        tdAuthor.textContent = `${trip.authorName || '—'} (${trip.authorUserId || generateShortUserId(getTripOwnerUid(trip))})`;
 
         const tdLoc = document.createElement('td');
         tdLoc.textContent = trip.location || '—';
@@ -2543,6 +4548,11 @@ async function bootstrapBrowserApp() {
         const tdAction = document.createElement('td');
         const actions = document.createElement('div');
         actions.className = 'table-actions';
+
+        const editBtn = document.createElement('a');
+        editBtn.className = 'btn btn-subtle';
+        editBtn.href = `./add-trip.html?edit=${encodeURIComponent(trip.id)}`;
+        editBtn.textContent = 'تعديل';
 
         const delBtn = document.createElement('button');
         delBtn.type = 'button';
@@ -2562,7 +4572,7 @@ async function bootstrapBrowserApp() {
           }
         });
 
-        actions.appendChild(delBtn);
+        actions.append(editBtn, delBtn);
         tdAction.appendChild(actions);
         tr.append(tdTitle, tdAuthor, tdLoc, tdDate, tdDist, tdAction);
         tripsBody.appendChild(tr);
@@ -2593,9 +4603,7 @@ async function bootstrapBrowserApp() {
           const users = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
           renderUsersTable(users);
         },
-        (error) => {
-          handleFirestoreError(error, OperationType.LIST, 'users');
-        }
+        (error) => handleFirestoreError(error, OperationType.LIST, 'users')
       );
 
       onSnapshot(
@@ -2604,9 +4612,7 @@ async function bootstrapBrowserApp() {
           const trips = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
           renderTripsTable(trips);
         },
-        (error) => {
-          handleFirestoreError(error, OperationType.LIST, 'trips');
-        }
+        (error) => handleFirestoreError(error, OperationType.LIST, 'trips')
       );
     });
   }
@@ -2616,6 +4622,8 @@ async function bootstrapBrowserApp() {
   if (page === 'dashboard') initDashboardPage();
   else if (page === 'details') initDetailsPage();
   else if (page === 'add-trip') initAddTripPage();
+  else if (page === 'profile') initProfilePage();
+  else if (page === 'leaderboard') initLeaderboardPage();
   else if (page === 'auth') initAuthPage();
   else if (page === 'admin') initAdminPage();
 }

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>لوحة المتصدرين — درب</title>
+    <meta
+      name="description"
+      content="تعرّف على أكثر الرحّالة مساهمة في منصة درب حسب عدد الرحلات وإجمالي المسافة المقطوعة والمنطقة."
+    />
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('darb_theme') === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body data-page="leaderboard">
+    <a class="skip-link" href="#main-content">انتقل إلى لوحة المتصدرين</a>
+
+    <!-- Top Navigation Bar -->
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="header-start">
+          <a href="./index.html" class="brand-logo" aria-label="درب — الصفحة الرئيسية">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9.5 7L14 14.5L17 10.5L21 19H3Z" />
+              </svg>
+            </span>
+            <span class="brand-name">درب</span>
+          </a>
+
+          <nav class="main-nav" aria-label="التنقل الرئيسي">
+            <a href="./index.html" class="nav-link">الرحلات</a>
+            <a href="./index.html#map" class="nav-link">خريطة المملكة</a>
+            <a href="./leaderboard.html" class="nav-link is-active" aria-current="page">المتصدرون</a>
+            <a href="./index.html#stats" class="nav-link">إحصائياتي</a>
+            <a href="./admin.html" class="nav-link nav-link-admin" id="navAdminLink" hidden>لوحة الإدارة</a>
+          </nav>
+        </div>
+
+        <div class="header-actions">
+          <button
+            type="button"
+            id="themeToggleBtn"
+            class="theme-toggle-btn"
+            aria-label="تبديل الوضع الليلي"
+            title="تبديل الوضع الليلي"
+          >
+            <svg class="icon-sm theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+            <svg class="icon-sm theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+          </button>
+
+          <a href="./auth.html" class="btn btn-outline" id="navLoginBtn">تسجيل الدخول</a>
+
+          <div class="user-menu-inline" id="navUserGroup" hidden>
+            <a href="./profile.html" class="user-profile-link" id="navUserProfileLink">
+              <span class="user-avatar-chip" id="navUserAvatar">ر</span>
+              <span class="user-greeting" id="navUserName"></span>
+            </a>
+            <button type="button" class="btn btn-ghost" id="navLogoutBtn">خروج</button>
+          </div>
+
+          <a href="./add-trip.html" class="btn btn-primary" id="navAddTripBtn">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span>رحلة جديدة</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="main-content container">
+      <section class="page-intro">
+        <div class="intro-copy">
+          <h1 class="page-title">لوحة المتصدرين</h1>
+          <p class="page-subtitle">ترتيب مباشر لأكثر الرحّالة مساهمة في توثيق المسارات الجبلية وقطع المسافات في درب.</p>
+        </div>
+        <span class="season-label">تحديث مباشر من Firestore</span>
+      </section>
+
+      <!-- Filter Tabs & Region Selector -->
+      <section class="surface-card leaderboard-controls-card" aria-label="تصفية لوحة المتصدرين">
+        <div class="section-toolbar leaderboard-toolbar">
+          <div class="filter-tabs" role="tablist" aria-label="ترتيب المتصدرين">
+            <button
+              type="button"
+              role="tab"
+              class="filter-tab is-active"
+              data-lb-sort="trips"
+              aria-selected="true"
+            >
+              الأكثر رحلات
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="filter-tab"
+              data-lb-sort="distance"
+              aria-selected="false"
+            >
+              أطول مسافة إجمالية
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="filter-tab"
+              data-lb-sort="region"
+              aria-selected="false"
+            >
+              حسب المنطقة
+            </button>
+          </div>
+
+          <div class="region-select-wrap" id="lbRegionWrap" hidden>
+            <label for="lbRegionSelect" class="form-label sr-only">اختر المنطقة</label>
+            <select id="lbRegionSelect" class="form-input region-select">
+              <option value="all">جميع المناطق</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- Top 3 Podium Cards -->
+      <section id="leaderboardPodium" class="podium-grid" aria-label="المراكز الثلاثة الأولى" hidden></section>
+
+      <!-- Leaderboard Table -->
+      <section class="surface-card admin-section" aria-labelledby="lbTableHeading">
+        <div class="card-header-row">
+          <div>
+            <h2 id="lbTableHeading" class="card-section-title">الترتيب العام للرحّالة</h2>
+            <p class="card-section-subtitle" id="lbSummarySubtitle">جاري تحميل بيانات المتصدرين...</p>
+          </div>
+        </div>
+
+        <div id="leaderboardLoading" class="loading-grid">
+          <div class="skeleton-card skeleton-sm"></div>
+          <div class="skeleton-card skeleton-sm"></div>
+          <div class="skeleton-card skeleton-sm"></div>
+        </div>
+
+        <div id="leaderboardTableWrap" class="table-scroll" hidden>
+          <table class="admin-table leaderboard-table">
+            <thead>
+              <tr>
+                <th>المركز</th>
+                <th>الرحّالة والمعرّف</th>
+                <th>شارات الإنجاز</th>
+                <th>عدد الرحلات</th>
+                <th>إجمالي المسافة</th>
+                <th>أعلى ارتفاع مكتسب</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboardTableBody" data-testid="leaderboard-body"></tbody>
+          </table>
+        </div>
+
+        <div id="leaderboardEmpty" class="empty-state" hidden>
+          <h3 class="empty-title">لا توجد رحلات مضافة بعد، كن أول من يوثق مساره!</h3>
+          <p class="empty-desc">بمجرد نشر أول رحلة في درب سيظهر الترتيب التفاعلي للرحّالة هنا تلقائياً.</p>
+          <div class="empty-actions">
+            <a href="./add-trip.html" class="btn btn-primary">وثّق أول رحلة</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p class="footer-brand">درب — لكل رحلة حكاية تستحق أن تُروى</p>
+        <div class="footer-links">
+          <a href="./index.html" class="footer-link">الرحلات</a>
+          <span aria-hidden="true">·</span>
+          <a href="./add-trip.html" class="footer-link">توثيق رحلة</a>
+        </div>
+      </div>
+    </footer>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

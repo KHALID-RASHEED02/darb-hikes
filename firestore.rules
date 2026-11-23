@@ -14,6 +14,13 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidCustomUserId(val) {
+      return val is string
+        && val.size() >= 3
+        && val.size() <= 24
+        && val.matches('^[a-zA-Z0-9_\\-\\p{Arabic}]+$');
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -33,9 +40,7 @@ service cloud.firestore {
     function isBootstrappedAdminEmail() {
       return isSignedIn()
         && request.auth.token.email_verified == true
-        && (
-           request.auth.token.email == 'az208345@gmail.com'
-        );
+        && request.auth.token.email == 'az208345@gmail.com';
     }
 
     function isSuperAdmin() {
@@ -60,13 +65,45 @@ service cloud.firestore {
     // -----------------------------------------------------------------------
     function isValidUserProfile(data, userId) {
       return data.keys().hasAll(['uid', 'name', 'email', 'role', 'isBanned', 'createdAt'])
-        && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'isBanned', 'createdAt'])
+        && data.keys().hasOnly([
+          'uid', 'userId', 'userIdLower', 'name', 'email', 'dateOfBirth', 'favorites', 'role', 'isBanned', 'createdAt'
+        ])
         && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && (!('userId' in data) || isValidCustomUserId(data.userId))
+        && (!('userIdLower' in data) || isValidCustomUserId(data.userIdLower))
         && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
         && data.email is string && data.email.size() >= 5 && data.email.size() <= 160
+        && (!('dateOfBirth' in data) || (
+          data.dateOfBirth is string && (
+            data.dateOfBirth == ''
+            || (data.dateOfBirth.size() == 10 && data.dateOfBirth.matches('^\\d{4}-\\d{2}-\\d{2}$'))
+          )
+        ))
+        && (!('favorites' in data) || (
+          data.favorites is list && data.favorites.size() <= 200
+          && (data.favorites.size() == 0 || (data.favorites[0] is string && data.favorites[0].size() <= 128))
+        ))
         && data.role is string && data.role in ['user', 'superadmin']
         && data.isBanned is bool
         && data.createdAt is timestamp;
+    }
+
+    function isValidUsernameClaim(data) {
+      return data.keys().hasAll(['uid', 'userId', 'normalizedId', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'userId', 'normalizedId', 'updatedAt'])
+        && data.uid is string && isValidId(data.uid)
+        && isValidCustomUserId(data.userId)
+        && isValidCustomUserId(data.normalizedId)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPublicProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'name', 'userId', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'name', 'userId', 'updatedAt'])
+        && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && isValidCustomUserId(data.userId)
+        && data.updatedAt is timestamp;
     }
 
     function isValidTrip(data) {
@@ -80,7 +117,8 @@ service cloud.firestore {
           'title', 'location', 'region', 'dateIso', 'year', 'difficulty',
           'distanceKm', 'durationHours', 'elevationGainM', 'maxElevationM', 'minElevationM',
           'notes', 'coverImageUrl', 'gpxUrl', 'gpxFileName', 'startLat', 'startLng',
-          'routePoints', 'elevationProfile', 'authorUid', 'authorName', 'createdAt'
+          'routePoints', 'elevationProfile', 'authorUid', 'authorId', 'authorName', 'authorUserId',
+          'createdAt', 'updatedAt'
         ])
         && data.title is string && data.title.size() >= 2 && data.title.size() <= 120
         && data.location is string && data.location.size() >= 2 && data.location.size() <= 120
@@ -104,17 +142,34 @@ service cloud.firestore {
         && data.elevationProfile is list && data.elevationProfile.size() >= 2 && data.elevationProfile.size() <= 30
         && data.elevationProfile[0] is map && data.elevationProfile[0].km is number && data.elevationProfile[0].m is number
         && data.authorUid is string && isValidId(data.authorUid)
+        && (!('authorId' in data) || (data.authorId is string && data.authorId == data.authorUid && isValidId(data.authorId)))
         && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80
-        && data.createdAt is timestamp;
+        && (!('authorUserId' in data) || (data.authorUserId is string && data.authorUserId.size() <= 32))
+        && data.createdAt is timestamp
+        && (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
     function isValidComment(data, tripId) {
       return data.keys().hasAll(['tripId', 'authorUid', 'authorName', 'text', 'createdAt'])
-        && data.keys().hasOnly(['tripId', 'authorUid', 'authorName', 'text', 'createdAt'])
+        && data.keys().hasOnly(['tripId', 'authorUid', 'authorName', 'authorUserId', 'rating', 'text', 'createdAt'])
         && data.tripId is string && data.tripId == tripId && isValidId(data.tripId)
         && data.authorUid is string && isValidId(data.authorUid)
         && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 80
+        && (!('authorUserId' in data) || (data.authorUserId is string && data.authorUserId.size() <= 32))
+        && (!('rating' in data) || (data.rating is number && data.rating >= 1 && data.rating <= 5))
         && data.text is string && data.text.size() >= 2 && data.text.size() <= 1000
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTrailAlert(data, tripId) {
+      return data.keys().hasAll(['tripId', 'status', 'note', 'authorUid', 'authorName', 'createdAt'])
+        && data.keys().hasOnly(['tripId', 'status', 'note', 'authorUid', 'authorName', 'authorUserId', 'createdAt'])
+        && data.tripId is string && data.tripId == tripId && isValidId(data.tripId)
+        && data.status is string && data.status in ['الطريق سالك', 'يوجد سيول/وحل', 'يتطلب دفع رباعي', 'مغلق للصيانة']
+        && data.note is string && data.note.size() <= 500
+        && data.authorUid is string && isValidId(data.authorUid)
+        && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 80
+        && (!('authorUserId' in data) || (data.authorUserId is string && data.authorUserId.size() <= 32))
         && data.createdAt is timestamp;
     }
 
@@ -140,23 +195,81 @@ service cloud.firestore {
         && isValidId(userId)
         && isValidUserProfile(incoming(), userId)
         && incoming().uid == existing().uid
-        && incoming().email == existing().email
         && incoming().createdAt == existing().createdAt
         && (
-          // Action 1: Owner updates display name only (cannot touch role or isBanned)
+          // Action 1: Owner updates profile fields, custom userId, & favorites (cannot touch role or isBanned)
           (
             isOwner(userId)
             && existing().isBanned == false
-            && incoming().diff(existing()).affectedKeys().hasOnly(['name'])
+            && incoming().role == existing().role
+            && incoming().isBanned == existing().isBanned
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'dateOfBirth', 'favorites', 'userId', 'userIdLower', 'email'
+            ])
           )
           ||
           // Action 2: Super Admin moderates account (ban/unban or role change, never banning self)
           (
             isSuperAdmin()
             && request.auth.uid != userId
+            && incoming().email == existing().email
             && incoming().diff(existing()).affectedKeys().hasOnly(['isBanned', 'role'])
           )
         );
+
+      allow delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Collection: /usernames/{handleKey} (Zero-PII Unique Handle Reservations)
+    // -----------------------------------------------------------------------
+    match /usernames/{handleKey} {
+      allow get: if isValidId(handleKey);
+      allow list: if false;
+
+      allow create: if isSignedIn()
+        && isValidId(handleKey)
+        && isValidUsernameClaim(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().updatedAt == request.time
+        && (isActiveUser() || isSuperAdmin());
+
+      allow update: if isSignedIn()
+        && isValidId(handleKey)
+        && isValidUsernameClaim(incoming())
+        && existing().uid == request.auth.uid
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['userId', 'normalizedId', 'updatedAt'])
+        && (isActiveUser() || isSuperAdmin());
+
+      allow delete: if isSignedIn()
+        && isValidId(handleKey)
+        && (existing().uid == request.auth.uid || isSuperAdmin());
+    }
+
+    // -----------------------------------------------------------------------
+    // Collection: /publicProfiles/{userId} (Zero-PII Public Member Cards)
+    // -----------------------------------------------------------------------
+    match /publicProfiles/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if false;
+
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidPublicProfile(incoming(), userId)
+        && incoming().updatedAt == request.time
+        && (isActiveUser() || isSuperAdmin());
+
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidPublicProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'userId', 'updatedAt'])
+        && (isActiveUser() || isSuperAdmin());
 
       allow delete: if false;
     }
@@ -172,6 +285,7 @@ service cloud.firestore {
         && isValidId(tripId)
         && isValidTrip(incoming())
         && incoming().authorUid == request.auth.uid
+        && (!('authorId' in incoming()) || incoming().authorId == request.auth.uid)
         && incoming().createdAt == request.time
         && (isActiveUser() || isSuperAdmin());
 
@@ -179,19 +293,31 @@ service cloud.firestore {
         && isValidId(tripId)
         && isValidTrip(incoming())
         && incoming().authorUid == existing().authorUid
+        && (!('authorId' in existing()) || incoming().authorId == existing().authorId)
         && incoming().createdAt == existing().createdAt
+        && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time)
         && (
-          // Action 1: Owner edits field notes
+          // Action 1: Owner edits their own trip details, notes, or synced author identity
           (
             existing().authorUid == request.auth.uid
             && isActiveUser()
-            && incoming().diff(existing()).affectedKeys().hasOnly(['notes'])
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'location', 'region', 'dateIso', 'year', 'difficulty',
+              'distanceKm', 'durationHours', 'elevationGainM', 'maxElevationM', 'minElevationM',
+              'notes', 'coverImageUrl', 'gpxUrl', 'gpxFileName', 'startLat', 'startLng',
+              'routePoints', 'elevationProfile', 'authorName', 'authorUserId', 'updatedAt'
+            ])
           )
           ||
-          // Action 2: Super Admin updates notes
+          // Action 2: Super Admin edits any trip
           (
             isSuperAdmin()
-            && incoming().diff(existing()).affectedKeys().hasOnly(['notes'])
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'location', 'region', 'dateIso', 'year', 'difficulty',
+              'distanceKm', 'durationHours', 'elevationGainM', 'maxElevationM', 'minElevationM',
+              'notes', 'coverImageUrl', 'gpxUrl', 'gpxFileName', 'startLat', 'startLng',
+              'routePoints', 'elevationProfile', 'authorName', 'authorUserId', 'updatedAt'
+            ])
           )
         );
 
@@ -220,6 +346,37 @@ service cloud.firestore {
         allow delete: if isSignedIn()
           && isValidId(tripId)
           && isValidId(commentId)
+          && (
+            existing().authorUid == request.auth.uid
+            || isSuperAdmin()
+            || (
+              exists(/databases/$(database)/documents/trips/$(tripId))
+              && get(/databases/$(database)/documents/trips/$(tripId)).data.authorUid == request.auth.uid
+            )
+          );
+      }
+
+      // ---------------------------------------------------------------------
+      // Subcollection: /trips/{tripId}/alerts/{alertId} (Master Gate)
+      // ---------------------------------------------------------------------
+      match /alerts/{alertId} {
+        allow get: if isValidId(tripId) && isValidId(alertId);
+        allow list: if isValidId(tripId);
+
+        allow create: if isSignedIn()
+          && isValidId(tripId)
+          && isValidId(alertId)
+          && isValidTrailAlert(incoming(), tripId)
+          && incoming().authorUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/trips/$(tripId))
+          && (isActiveUser() || isSuperAdmin());
+
+        allow update: if false;
+
+        allow delete: if isSignedIn()
+          && isValidId(tripId)
+          && isValidId(alertId)
           && (
             existing().authorUid == request.auth.uid
             || isSuperAdmin()

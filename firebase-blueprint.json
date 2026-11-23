@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Registered Darb user profile with role-based moderation status.",
+      "description": "Registered Darb user profile with customizable unique userId, birth date, saved favorites, role, and moderation status.",
       "type": "object",
       "properties": {
         "uid": {
@@ -10,6 +10,18 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "description": "Customizable unique user handle (alphanumeric, underscore, hyphen, or Arabic letters)."
+        },
+        "userIdLower": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "description": "Lowercase normalized form of userId for case-insensitive comparison."
         },
         "name": {
           "type": "string",
@@ -21,6 +33,14 @@
           "format": "email",
           "minLength": 5,
           "maxLength": 160
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "maxLength": 10
+        },
+        "favorites": {
+          "type": "array",
+          "description": "Bounded list (max 200) of bookmarked trip document IDs."
         },
         "role": {
           "type": "string",
@@ -36,9 +56,65 @@
       },
       "required": ["uid", "name", "email", "role", "isBanned", "createdAt"]
     },
+    "UsernameClaim": {
+      "title": "UsernameClaim",
+      "description": "Zero-PII unique handle reservation mapping normalized handle keys to owner UIDs for case-insensitive uniqueness.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24
+        },
+        "normalizedId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "userId", "normalizedId", "updatedAt"]
+    },
+    "PublicProfile": {
+      "title": "PublicProfile",
+      "description": "Zero-PII public member card storing only display name and custom User ID for the Public Member Profile view.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "name", "userId", "updatedAt"]
+    },
     "Trip": {
       "title": "Trip",
-      "description": "User-submitted hiking trip with route coordinates, elevation profile, and media.",
+      "description": "User-submitted hiking trip with route coordinates, elevation profile, publisher attribution, and media.",
       "type": "object",
       "properties": {
         "title": {
@@ -119,12 +195,26 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "authorName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 80
         },
+        "authorUserId": {
+          "type": "string",
+          "maxLength": 32
+        },
         "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
           "type": "string",
           "format": "date-time"
         }
@@ -154,7 +244,7 @@
     },
     "TripComment": {
       "title": "TripComment",
-      "description": "Comment posted on a specific hiking trip.",
+      "description": "Review with optional 1-5 star rating and comment posted on a hiking trip.",
       "type": "object",
       "properties": {
         "tripId": {
@@ -174,6 +264,13 @@
           "minLength": 2,
           "maxLength": 80
         },
+        "authorUserId": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "rating": {
+          "type": "number"
+        },
         "text": {
           "type": "string",
           "minLength": 2,
@@ -185,20 +282,73 @@
         }
       },
       "required": ["tripId", "authorUid", "authorName", "text", "createdAt"]
+    },
+    "TrailAlert": {
+      "title": "TrailAlert",
+      "description": "Live field trail condition alert posted on a specific hiking trip.",
+      "type": "object",
+      "properties": {
+        "tripId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["الطريق سالك", "يوجد سيول/وحل", "يتطلب دفع رباعي", "مغلق للصيانة"]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "authorUserId": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["tripId", "status", "note", "authorUid", "authorName", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "User profiles containing email, display name, role (user or superadmin), and moderation ban flag."
+      "description": "Private user profiles (PII isolated to owner and superadmin) with customizable userId, dateOfBirth, favorites, role, and ban flag."
+    },
+    "/usernames/{handleKey}": {
+      "schema": { "$ref": "#/entities/UsernameClaim" },
+      "description": "Zero-PII unique handle reservation index enforcing case-insensitive User ID uniqueness."
+    },
+    "/publicProfiles/{userId}": {
+      "schema": { "$ref": "#/entities/PublicProfile" },
+      "description": "Zero-PII public member cards (display name and custom User ID) for the Public Member Profile view."
     },
     "/trips/{tripId}": {
       "schema": { "$ref": "#/entities/Trip" },
-      "description": "Publicly readable hiking trips created by non-banned authenticated users, deletable by owner or superadmin."
+      "description": "Publicly readable hiking trips with publisher attribution (authorId, authorUid, authorName, authorUserId), editable and deletable by owner or superadmin."
     },
     "/trips/{tripId}/comments/{commentId}": {
       "schema": { "$ref": "#/entities/TripComment" },
-      "description": "Comments attached to a parent trip document, readable publicly and deletable by comment author, trip owner, or superadmin."
+      "description": "Star ratings and comments attached to a parent trip, deletable by comment author, trip owner, or superadmin."
+    },
+    "/trips/{tripId}/alerts/{alertId}": {
+      "schema": { "$ref": "#/entities/TrailAlert" },
+      "description": "Live trail condition alerts attached to a parent trip, deletable by alert author, trip owner, or superadmin."
     }
   }
 }

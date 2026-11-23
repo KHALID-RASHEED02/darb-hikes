@@ -6,8 +6,17 @@
     <title>تفاصيل الرحلة — درب</title>
     <meta
       name="description"
-      content="استعرض تفاصيل المسار الجبلي، الخريطة التفاعلية، ملف الارتفاعات، وتنزيل ملف GPX في درب."
+      content="استعرض تفاصيل المسار الجبلي، الخريطة التفاعلية، ملف الارتفاعات، تنبيهات حالة المسار، التقييمات وتنزيل ملف GPX في درب."
     />
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('darb_theme') === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -38,19 +47,41 @@
           </a>
 
           <nav class="main-nav" aria-label="التنقل الرئيسي">
-            <a href="./index.html" class="nav-link is-active">رحلاتي</a>
-            <a href="./index.html#map" class="nav-link">خريطة الرحلات</a>
+            <a href="./index.html" class="nav-link is-active">الرحلات</a>
+            <a href="./index.html#map" class="nav-link">خريطة المملكة</a>
+            <a href="./leaderboard.html" class="nav-link">المتصدرون</a>
             <a href="./index.html#stats" class="nav-link">إحصائياتي</a>
             <a href="./admin.html" class="nav-link nav-link-admin" id="navAdminLink" hidden>لوحة الإدارة</a>
           </nav>
         </div>
 
         <div class="header-actions">
+          <button
+            type="button"
+            id="themeToggleBtn"
+            class="theme-toggle-btn"
+            aria-label="تبديل الوضع الليلي"
+            title="تبديل الوضع الليلي"
+          >
+            <svg class="icon-sm theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+            <svg class="icon-sm theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+          </button>
+
           <a href="./auth.html" class="btn btn-outline" id="navLoginBtn">تسجيل الدخول</a>
+
           <div class="user-menu-inline" id="navUserGroup" hidden>
-            <span class="user-greeting" id="navUserName"></span>
+            <a href="./profile.html" class="user-profile-link" id="navUserProfileLink" title="إعدادات الحساب والملف الشخصي">
+              <span class="user-avatar-chip" id="navUserAvatar">ر</span>
+              <span class="user-greeting" id="navUserName"></span>
+            </a>
             <button type="button" class="btn btn-ghost" id="navLogoutBtn">خروج</button>
           </div>
+
           <a href="./index.html" class="btn btn-outline">العودة للرحلات</a>
         </div>
       </div>
@@ -67,7 +98,7 @@
       <!-- Loaded Trip Content -->
       <div id="detailContentWrap" hidden>
         <nav class="breadcrumb" aria-label="مسار التنقل">
-          <a href="./index.html" class="breadcrumb-link">رحلاتي</a>
+          <a href="./index.html" class="breadcrumb-link">الرحلات</a>
           <span class="breadcrumb-sep" aria-hidden="true">/</span>
           <span id="breadcrumbRegion" class="breadcrumb-region"></span>
           <span class="breadcrumb-sep" aria-hidden="true">/</span>
@@ -87,18 +118,23 @@
           <div class="detail-hero-inner">
             <div class="detail-hero-top">
               <span id="detailDifficultyBadge" class="detail-difficulty-badge">متوسط</span>
-              <button
-                type="button"
-                id="detailDeleteBtn"
-                class="btn btn-danger-soft"
-                hidden
-              >
-                حذف الرحلة
-              </button>
+              <div class="detail-hero-controls">
+                <button type="button" id="detailFavBtn" class="hero-fav-btn" aria-pressed="false">
+                  <svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <span id="detailFavLabel">حفظ في المفضلة</span>
+                </button>
+                <a href="./add-trip.html" id="detailEditBtn" class="hero-fav-btn" hidden>تعديل الرحلة</a>
+                <button type="button" id="detailDeleteBtn" class="btn btn-danger-soft" hidden>حذف الرحلة</button>
+              </div>
             </div>
 
             <div class="detail-hero-bottom">
-              <p id="detailAuthorLine" class="detail-hero-kicker"></p>
+              <div class="detail-author-row">
+                <p id="detailAuthorLine" class="detail-hero-kicker"></p>
+                <div id="detailAuthorBadges" class="badges-inline-row badges-on-dark"></div>
+              </div>
               <h1 id="detailTitle" class="detail-hero-title"></h1>
               <div class="detail-hero-meta">
                 <span class="meta-inline">
@@ -110,6 +146,8 @@
                 </span>
                 <span aria-hidden="true">·</span>
                 <span id="detailDate"></span>
+                <span aria-hidden="true">·</span>
+                <span id="detailAvgRatingHero" class="meta-inline"></span>
               </div>
             </div>
           </div>
@@ -169,10 +207,10 @@
           </article>
         </section>
 
-        <!-- Route Actions Bar -->
+        <!-- Route Actions Bar (GPX + Google Maps + Share Card + Copy Coords) -->
         <section class="actions-bar surface-card" aria-label="إجراءات المسار">
           <div class="actions-copy">
-            <h2 class="actions-title">ملف المسار والملاحة الميدانية</h2>
+            <h2 class="actions-title">ملف المسار والملاحة والمشاركة</h2>
             <p class="actions-desc" id="detailCoordsText"></p>
           </div>
           <div class="actions-buttons">
@@ -181,6 +219,16 @@
                 <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" />
               </svg>
               <span>تحميل ملف GPX</span>
+            </button>
+
+            <button type="button" id="shareTripBtn" class="btn btn-outline">
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="18" cy="5" r="3" />
+                <circle cx="6" cy="12" r="3" />
+                <circle cx="18" cy="19" r="3" />
+                <path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98" />
+              </svg>
+              <span>مشاركة الرحلة</span>
             </button>
 
             <a
@@ -194,7 +242,7 @@
                 <path d="M12 21s-6-5.6-6-10a6 6 0 1 1 12 0c0 4.4-6 10-6 10z" />
                 <circle cx="12" cy="11" r="2.2" />
               </svg>
-              <span>فتح نقطة البداية في خرائط Google</span>
+              <span>خرائط Google</span>
             </a>
 
             <button type="button" id="copyCoordsBtn" class="btn btn-ghost">نسخ الإحداثيات</button>
@@ -266,6 +314,66 @@
           </article>
         </section>
 
+        <!-- Trail Condition Alerts (حالة المسار الميدانية) -->
+        <section class="surface-card alerts-section" aria-labelledby="alertsHeading">
+          <div class="card-header-row">
+            <div>
+              <h2 id="alertsHeading" class="card-section-title">تنبيهات وحالة المسار الميدانية</h2>
+              <p class="card-section-subtitle">تحديثات حيّة من الرحّالة حول حالة الطريق والطقس وإمكانية الوصول</p>
+            </div>
+            <span id="latestTrailStatusBadge" class="trail-status-badge status-neutral">لا توجد تقارير بعد</span>
+          </div>
+
+          <div id="alertAuthPrompt" class="inline-notice" hidden>
+            <span>سجّل دخولك لنشر تحديث ميداني حول حالة هذا المسار.</span>
+            <a href="./auth.html" class="btn btn-outline">تسجيل الدخول</a>
+          </div>
+
+          <form id="trailAlertForm" class="alert-form" novalidate hidden>
+            <div id="alertErrorBanner" class="form-error-banner" role="alert" hidden></div>
+
+            <div class="form-group">
+              <span class="form-label">اختر حالة المسار الحالية</span>
+              <div class="alert-status-options" role="radiogroup" aria-label="حالة المسار">
+                <label class="alert-status-opt">
+                  <input type="radio" name="alertStatus" value="الطريق سالك" checked />
+                  <span class="status-opt-clear">الطريق سالك</span>
+                </label>
+                <label class="alert-status-opt">
+                  <input type="radio" name="alertStatus" value="يوجد سيول/وحل" />
+                  <span class="status-opt-mud">يوجد سيول/وحل</span>
+                </label>
+                <label class="alert-status-opt">
+                  <input type="radio" name="alertStatus" value="يتطلب دفع رباعي" />
+                  <span class="status-opt-4x4">يتطلب دفع رباعي</span>
+                </label>
+                <label class="alert-status-opt">
+                  <input type="radio" name="alertStatus" value="مغلق للصيانة" />
+                  <span class="status-opt-closed">مغلق للصيانة</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="alert-form-row">
+              <div class="form-group alert-note-group">
+                <label for="alertNoteInput" class="sr-only">ملاحظة ميدانية اختيارية</label>
+                <input
+                  type="text"
+                  id="alertNoteInput"
+                  name="note"
+                  class="form-input"
+                  maxlength="500"
+                  placeholder="أضف تفاصيل ميدانية مختصرة (مثلاً: الطريق ممتاز للسيارات الصغيرة حتى البوابة)..."
+                />
+              </div>
+              <button type="submit" id="submitAlertBtn" class="btn btn-primary">نشر تحديث الحالة</button>
+            </div>
+          </form>
+
+          <ul id="trailAlertsList" class="alerts-list" data-testid="trail-alerts-list" aria-live="polite"></ul>
+          <p id="trailAlertsEmpty" class="comments-empty" hidden>لا توجد تنبيهات ميدانية مسجّلة لهذا المسار حتى الآن.</p>
+        </section>
+
         <!-- Field Notes & Quick Facts -->
         <section class="notes-layout" aria-label="المذكرات الميدانية وتفاصيل المسار">
           <article class="surface-card field-notes-card">
@@ -308,23 +416,37 @@
           <div id="tripGalleryGrid" class="gallery-grid" data-testid="trip-gallery"></div>
         </section>
 
-        <!-- Comments Section (Firestore Subcollection) -->
+        <!-- Star Ratings & Reviews Section -->
         <section class="comments-section surface-card" aria-labelledby="commentsHeading">
           <div class="section-header-inline comments-header">
             <div>
-              <h2 id="commentsHeading" class="card-section-title">تعليقات وتجارب الرحّالة</h2>
-              <p class="card-section-subtitle">شارك انطباعك أو نصيحتك حول هذا المسار</p>
+              <h2 id="commentsHeading" class="card-section-title">التقييمات وتعليقات الرحّالة</h2>
+              <p class="card-section-subtitle" id="reviewsAverageSummary">شارك تقييمك بالنجوم وتجربتك حول هذا المسار</p>
             </div>
             <span class="gallery-count" id="commentsCount" data-testid="comments-count">0 تعليقات</span>
           </div>
 
           <div id="commentAuthPrompt" class="inline-notice" hidden>
-            <span>يرجى تسجيل الدخول لإضافة تعليق على هذا المسار.</span>
+            <span>يرجى تسجيل الدخول لإضافة تقييم وتعليق على هذا المسار.</span>
             <a href="./auth.html" class="btn btn-outline">تسجيل الدخول</a>
           </div>
 
           <form id="commentForm" class="comment-form" novalidate hidden>
             <div id="commentErrorBanner" class="form-error-banner" role="alert" hidden></div>
+
+            <div class="form-group">
+              <span class="form-label">تقييمك للمسار</span>
+              <div class="star-picker" id="starPicker" role="radiogroup" aria-label="تقييم من 1 إلى 5 نجوم">
+                <button type="button" class="star-btn is-selected" data-star="1" aria-label="نجمة واحدة">★</button>
+                <button type="button" class="star-btn is-selected" data-star="2" aria-label="نجمتان">★</button>
+                <button type="button" class="star-btn is-selected" data-star="3" aria-label="3 نجوم">★</button>
+                <button type="button" class="star-btn is-selected" data-star="4" aria-label="4 نجوم">★</button>
+                <button type="button" class="star-btn is-selected" data-star="5" aria-label="5 نجوم">★</button>
+                <span class="star-picker-readout" id="starPickerReadout">5 / 5</span>
+              </div>
+              <input type="hidden" id="commentRatingInput" name="rating" value="5" />
+            </div>
+
             <div class="form-group">
               <label for="commentTextInput" class="form-label">تعليقك حول المسار <span class="required-mark">*</span></label>
               <textarea
@@ -337,12 +459,12 @@
               ></textarea>
             </div>
             <div class="comment-form-actions">
-              <button type="submit" class="btn btn-primary" id="submitCommentBtn">إضافة تعليق</button>
+              <button type="submit" class="btn btn-primary" id="submitCommentBtn">إضافة التقييم والتعليق</button>
             </div>
           </form>
 
           <ul id="commentsList" class="comments-list" data-testid="comments-list" aria-live="polite"></ul>
-          <p id="commentsEmptyNote" class="comments-empty" hidden>لا توجد تعليقات بعد — كن أول من يشارك تجربته في هذا المسار.</p>
+          <p id="commentsEmptyNote" class="comments-empty" hidden>لا توجد تقييمات بعد — كن أول من يشارك تجربته في هذا المسار.</p>
         </section>
       </div>
     </main>
@@ -363,8 +485,8 @@
     <!-- Delete Confirmation Dialog -->
     <dialog id="confirmDialog" class="confirm-modal" aria-labelledby="confirmTitle">
       <div class="confirm-shell">
-        <h2 id="confirmTitle" class="confirm-title">تأكيد حذف الرحلة</h2>
-        <p id="confirmMessage" class="confirm-message">هل أنت متأكد من حذف هذه الرحلة نهائياً؟</p>
+        <h2 id="confirmTitle" class="confirm-title">تأكيد الحذف</h2>
+        <p id="confirmMessage" class="confirm-message">هل أنت متأكد من تنفيذ هذا الإجراء؟</p>
         <div class="confirm-actions">
           <button type="button" id="confirmAcceptBtn" class="btn btn-danger">تأكيد الحذف</button>
           <button type="button" id="confirmCancelBtn" class="btn btn-outline">إلغاء</button>
@@ -376,7 +498,9 @@
       <div class="container footer-inner">
         <p class="footer-brand">درب — لكل رحلة حكاية تستحق أن تُروى</p>
         <div class="footer-links">
-          <a href="./index.html" class="footer-link">رحلاتي</a>
+          <a href="./index.html" class="footer-link">الرحلات</a>
+          <span aria-hidden="true">·</span>
+          <a href="./leaderboard.html" class="footer-link">المتصدرون</a>
           <span aria-hidden="true">·</span>
           <a href="./add-trip.html" class="footer-link">توثيق رحلة</a>
         </div>

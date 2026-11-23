@@ -5,6 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>لوحة الإدارة — درب</title>
     <meta name="description" content="لوحة تحكم المشرف العام لإدارة المستخدمين وحظر الحسابات وإدارة الرحلات على منصة درب." />
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('darb_theme') === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -30,16 +39,36 @@
           </a>
 
           <nav class="main-nav" aria-label="التنقل الرئيسي">
-            <a href="./index.html" class="nav-link">رحلاتي</a>
-            <a href="./index.html#map" class="nav-link">خريطة الرحلات</a>
+            <a href="./index.html" class="nav-link">الرحلات</a>
+            <a href="./index.html#map" class="nav-link">خريطة المملكة</a>
+            <a href="./leaderboard.html" class="nav-link">المتصدرون</a>
             <a href="./index.html#stats" class="nav-link">إحصائياتي</a>
             <a href="./admin.html" class="nav-link is-active nav-link-admin" id="navAdminLink" aria-current="page" hidden>لوحة الإدارة</a>
           </nav>
         </div>
 
         <div class="header-actions">
+          <button
+            type="button"
+            id="themeToggleBtn"
+            class="theme-toggle-btn"
+            aria-label="تبديل الوضع الليلي"
+            title="تبديل الوضع الليلي"
+          >
+            <svg class="icon-sm theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+            <svg class="icon-sm theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+          </button>
+
           <div class="user-menu-inline" id="navUserGroup" hidden>
-            <span class="user-greeting" id="navUserName"></span>
+            <a href="./profile.html" class="user-profile-link" id="navUserProfileLink" title="إعدادات الحساب والملف الشخصي">
+              <span class="user-avatar-chip" id="navUserAvatar">ر</span>
+              <span class="user-greeting" id="navUserName"></span>
+            </a>
             <button type="button" class="btn btn-ghost" id="navLogoutBtn">خروج</button>
           </div>
           <a href="./index.html" class="btn btn-outline">العودة للرئيسية</a>
@@ -133,7 +162,7 @@
             <table class="admin-table">
               <thead>
                 <tr>
-                  <th>الاسم</th>
+                  <th>الاسم والمعرّف</th>
                   <th>البريد الإلكتروني</th>
                   <th>الدور</th>
                   <th>الحالة</th>

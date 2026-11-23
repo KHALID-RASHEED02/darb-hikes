@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>حسابي وإعدادات الملف الشخصي — درب</title>
+    <meta
+      name="description"
+      content="إدارة حسابك الشخصي في منصة درب، معرف المستخدم، تاريخ الميلاد، تحديث الاسم والبريد وكلمة المرور، وشارات الإنجاز."
+    />
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('darb_theme') === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body data-page="profile">
+    <a class="skip-link" href="#main-content">انتقل إلى إعدادات الحساب</a>
+
+    <!-- Top Navigation Bar -->
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="header-start">
+          <a href="./index.html" class="brand-logo" aria-label="درب — الصفحة الرئيسية">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 19L9.5 7L14 14.5L17 10.5L21 19H3Z" />
+              </svg>
+            </span>
+            <span class="brand-name">درب</span>
+          </a>
+
+          <nav class="main-nav" aria-label="التنقل الرئيسي">
+            <a href="./index.html" class="nav-link">الرحلات</a>
+            <a href="./index.html#map" class="nav-link">خريطة المملكة</a>
+            <a href="./leaderboard.html" class="nav-link">المتصدرون</a>
+            <a href="./index.html#stats" class="nav-link">إحصائياتي</a>
+            <a href="./admin.html" class="nav-link nav-link-admin" id="navAdminLink" hidden>لوحة الإدارة</a>
+          </nav>
+        </div>
+
+        <div class="header-actions">
+          <button
+            type="button"
+            id="themeToggleBtn"
+            class="theme-toggle-btn"
+            aria-label="تبديل الوضع الليلي"
+            title="تبديل الوضع الليلي"
+          >
+            <svg class="icon-sm theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+            <svg class="icon-sm theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+          </button>
+
+          <a href="./auth.html" class="btn btn-outline" id="navLoginBtn">تسجيل الدخول</a>
+
+          <div class="user-menu-inline" id="navUserGroup" hidden>
+            <a href="./profile.html" class="user-profile-link is-current" id="navUserProfileLink" aria-current="page">
+              <span class="user-avatar-chip" id="navUserAvatar">ر</span>
+              <span class="user-greeting" id="navUserName"></span>
+            </a>
+            <button type="button" class="btn btn-ghost" id="navLogoutBtn">خروج</button>
+          </div>
+
+          <a href="./add-trip.html" class="btn btn-primary" id="navAddTripBtn">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span>رحلة جديدة</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="main-content container">
+      <!-- Auth Guard -->
+      <section id="profileGuardBox" class="empty-state">
+        <h1 class="empty-title" id="profileGuardTitle">جاري تحميل بيانات الحساب...</h1>
+        <p class="empty-desc" id="profileGuardDesc">يرجى تسجيل الدخول للوصول إلى ملفك الشخصي وإعدادات الحساب.</p>
+        <a href="./auth.html?next=./profile.html" class="btn btn-primary" id="profileGuardLoginLink" hidden>
+          تسجيل الدخول
+        </a>
+      </section>
+
+      <!-- Authenticated Profile Workspace -->
+      <div id="profileWorkspace" hidden>
+        <section class="page-intro">
+          <div class="intro-copy">
+            <h1 class="page-title">الملف الشخصي وإعدادات الحساب</h1>
+            <p class="page-subtitle">تحكّم ببيانات حسابك، معرفك الفريد في درب، وشارات الإنجاز التي حصلت عليها.</p>
+          </div>
+          <div class="profile-id-pill">
+            <span class="profile-id-label">المعرّف الفريد:</span>
+            <strong id="profileShortIdDisplay" class="profile-id-code" data-testid="profile-user-id">DRB-000000</strong>
+            <button type="button" id="copyUserIdBtn" class="btn btn-subtle">نسخ</button>
+            <button type="button" id="focusUserIdBtn" class="btn btn-outline">تعديل</button>
+          </div>
+        </section>
+
+        <!-- Profile Hero Summary & Badges -->
+        <section class="surface-card profile-summary-card" aria-label="ملخص الحساب وشارات الإنجاز">
+          <div class="profile-identity-row">
+            <div class="profile-avatar-lg" id="profileAvatarLg" aria-hidden="true">ر</div>
+            <div class="profile-identity-copy">
+              <div class="profile-name-line">
+                <h2 class="profile-display-name" id="profileDisplayNameTitle">—</h2>
+                <span class="role-tag" id="profileRoleBadge">رحّالة</span>
+              </div>
+              <p class="profile-email-line" id="profileEmailLine">—</p>
+              <div class="badges-inline-row" id="profileEarnedBadgesInline" aria-label="الشارات المكتسبة"></div>
+            </div>
+          </div>
+
+          <div class="profile-mini-stats">
+            <div class="elev-mini-metric">
+              <span class="elev-mini-label">رحلاتي المنشورة</span>
+              <strong class="elev-mini-value" id="profileTripsCount">0</strong>
+            </div>
+            <div class="elev-mini-metric">
+              <span class="elev-mini-label">إجمالي المسافة</span>
+              <strong class="elev-mini-value" id="profileTotalKm">0.0 km</strong>
+            </div>
+            <div class="elev-mini-metric">
+              <span class="elev-mini-label">أعلى ارتفاع مكتسب</span>
+              <strong class="elev-mini-value" id="profileMaxGain">0 m</strong>
+            </div>
+            <div class="elev-mini-metric">
+              <span class="elev-mini-label">المسارات المحفوظة</span>
+              <strong class="elev-mini-value" id="profileFavCount">0</strong>
+            </div>
+          </div>
+        </section>
+
+        <!-- Achievement Badges Showcase -->
+        <section class="surface-card profile-badges-section" aria-labelledby="badgesHeading">
+          <div class="card-header-row">
+            <div>
+              <h2 id="badgesHeading" class="card-section-title">شارات الإنجاز</h2>
+              <p class="card-section-subtitle">تُمنح الشارات تلقائياً بناءً على رحلاتك الموثّقة وتظهر بجانب اسمك في المنصة</p>
+            </div>
+          </div>
+          <div id="profileBadgesGrid" class="badges-grid" data-testid="profile-badges-grid"></div>
+        </section>
+
+        <!-- Settings Forms Grid -->
+        <section class="profile-settings-grid" aria-label="تحديث بيانات الحساب">
+          <!-- Basic Profile Info (Display Name & Date of Birth) -->
+          <article class="surface-card">
+            <div class="card-header-row">
+              <div>
+                <h2 class="card-section-title">البيانات الأساسية والمعرّف الفريد</h2>
+                <p class="card-section-subtitle">تحديث الاسم الظاهر، تخصيص معرّفك الفريد (User ID)، وتاريخ الميلاد ومزامنتها مع رحلاتك</p>
+              </div>
+            </div>
+
+            <div id="profileInfoError" class="form-error-banner" role="alert" hidden></div>
+
+            <form id="profileInfoForm" class="auth-form" novalidate>
+              <div class="form-group">
+                <label for="profileNameInput" class="form-label">الاسم الظاهر <span class="required-mark">*</span></label>
+                <input
+                  type="text"
+                  id="profileNameInput"
+                  name="name"
+                  class="form-input"
+                  minlength="2"
+                  maxlength="80"
+                  required
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="profileUserIdInput" class="form-label">
+                  المعرّف الفريد (User ID) <span class="required-mark">*</span>
+                </label>
+                <input
+                  type="text"
+                  id="profileUserIdInput"
+                  name="userId"
+                  class="form-input"
+                  dir="auto"
+                  minlength="3"
+                  maxlength="24"
+                  placeholder="مثال: KHALID_02 أو خالد_02"
+                  autocomplete="off"
+                  required
+                />
+                <p class="form-hint">
+                  من 3 إلى 24 حرفاً (أحرف إنجليزية أو عربية، أرقام، _ أو - بدون مسافات). يُفحص تلقائياً لضمان عدم تكراره.
+                </p>
+              </div>
+
+              <div class="form-group">
+                <label for="profileDobInput" class="form-label">تاريخ الميلاد</label>
+                <input type="date" id="profileDobInput" name="dateOfBirth" class="form-input" />
+              </div>
+
+              <button type="submit" id="saveProfileInfoBtn" class="btn btn-primary">حفظ التغييرات</button>
+            </form>
+          </article>
+
+          <!-- Security: Update Email & Password -->
+          <article class="surface-card">
+            <div class="card-header-row">
+              <div>
+                <h2 class="card-section-title">البريد الإلكتروني وكلمة المرور</h2>
+                <p class="card-section-subtitle">قد يتطلب التعديل إدخال كلمة المرور الحالية لإعادة التحقق الأمني</p>
+              </div>
+            </div>
+
+            <div id="profileSecurityNotice" class="inline-notice" hidden></div>
+            <div id="profileSecurityError" class="form-error-banner" role="alert" hidden></div>
+
+            <form id="updateEmailForm" class="auth-form security-subform" novalidate>
+              <div class="form-group">
+                <label for="newEmailInput" class="form-label">البريد الإلكتروني الجديد</label>
+                <input
+                  type="email"
+                  id="newEmailInput"
+                  name="newEmail"
+                  class="form-input"
+                  placeholder="new-email@example.com"
+                  required
+                />
+              </div>
+              <div class="form-group">
+                <label for="emailCurrentPasswordInput" class="form-label">كلمة المرور الحالية (لإعادة التحقق)</label>
+                <input
+                  type="password"
+                  id="emailCurrentPasswordInput"
+                  name="currentPassword"
+                  class="form-input"
+                  placeholder="••••••••"
+                  autocomplete="current-password"
+                />
+              </div>
+              <button type="submit" id="updateEmailBtn" class="btn btn-outline">تحديث البريد الإلكتروني</button>
+            </form>
+
+            <hr class="section-divider" />
+
+            <form id="updatePasswordForm" class="auth-form security-subform" novalidate>
+              <div class="form-group">
+                <label for="passwordCurrentInput" class="form-label">كلمة المرور الحالية</label>
+                <input
+                  type="password"
+                  id="passwordCurrentInput"
+                  name="currentPassword"
+                  class="form-input"
+                  placeholder="••••••••"
+                  autocomplete="current-password"
+                />
+              </div>
+              <div class="form-group">
+                <label for="newPasswordInput" class="form-label">كلمة المرور الجديدة (6 أحرف على الأقل)</label>
+                <input
+                  type="password"
+                  id="newPasswordInput"
+                  name="newPassword"
+                  class="form-input"
+                  placeholder="••••••••"
+                  minlength="6"
+                  autocomplete="new-password"
+                  required
+                />
+              </div>
+              <button type="submit" id="updatePasswordBtn" class="btn btn-primary">تحديث كلمة المرور</button>
+            </form>
+          </article>
+        </section>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p class="footer-brand">درب — لكل رحلة حكاية تستحق أن تُروى</p>
+        <div class="footer-links">
+          <a href="./index.html" class="footer-link">الرحلات</a>
+          <span aria-hidden="true">·</span>
+          <a href="./leaderboard.html" class="footer-link">المتصدرون</a>
+        </div>
+      </div>
+    </footer>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
